@@ -88,7 +88,7 @@ To run the SPEED analysis tool, you'll need Python 3 and several scientific comp
     * The status label at the bottom will show the progress.
     * Upon completion, a confirmation message will appear.
 
-    ![Screenshot of the SPEED GUI with the new YOLO option](gui_speed_yolo.png)
+    ![Screenshot of the SPEED GUI with the new YOLO option](speed_cv_gui.png)
 
 ## Input Files 📂
 

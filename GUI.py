@@ -50,7 +50,7 @@ OPTIONAL_FOR_UNENRICHED = ["gaze_enriched.csv", "fixations_enriched.csv"]
 class SpeedApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SPEED v3.0 (Modular Analyzer) - Cognitive and Behavioral Science Lab")
+        self.root.title("SPEED v2.0 - Cognitive and Behavioral Science Lab")
         self.file_entries = {}
         
         main_frame = tk.Frame(root, padx=10, pady=10)
