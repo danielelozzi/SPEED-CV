@@ -60,7 +60,7 @@ To run the SPEED analysis tool, you'll need Python 3 and several scientific comp
     * **Note on `Tkinter`**: This is part of the Python standard library and does not require a separate installation.
     * **Note on `torch`**: Installing PyTorch can be complex, especially if you want to use a GPU (highly recommended for YOLO). Please refer to the official [PyTorch installation guide](https://pytorch.org/get-started/locally/) for instructions tailored to your system (Linux/Mac/Windows, CUDA version, etc.).
 
-    * **Note on YOLO **: for using YOLO is mandatory to download the pre-trained neural network at the following link on huggingface website: [https://huggingface.co/Ultralytics/YOLOv8/blob/main/yolov8n.pt](https://huggingface.co/Ultralytics/YOLOv8/blob/main/yolov8n.pt)
+    * **Note on YOLO**: for using YOLO is mandatory to download the pre-trained neural network at the following link on huggingface website: [https://huggingface.co/Ultralytics/YOLOv8/blob/main/yolov8n.pt](https://huggingface.co/Ultralytics/YOLOv8/blob/main/yolov8n.pt)
 
 ## How to Use the Application 🚀
 
