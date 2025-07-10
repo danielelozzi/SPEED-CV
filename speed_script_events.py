@@ -190,77 +190,69 @@ def get_timestamp_col(df):
             return col
     return None
 
+
 def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, un_enriched_mode: bool, video_width: int, video_height: int):
-    """Genera e salva tutti i grafici per l'evento."""
+    """
+    Genera e salva tutti i grafici per l'evento, unificando la logica da generate_plots e generate_plots_2.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     fixations_enr, fixations_not_enr = data.get('fixations_enr', pd.DataFrame()), data.get('fixations_not_enr', pd.DataFrame())
-    gaze_enr = data.get('gaze', pd.DataFrame()) # Get enriched gaze data
+    gaze_enr, gaze_not_enr = data.get('gaze', pd.DataFrame()), data.get('gaze_not_enr', pd.DataFrame())
+    pupil_df, blinks_df, saccades_df = data.get('pupil', pd.DataFrame()), data.get('blinks', pd.DataFrame()), data.get('saccades', pd.DataFrame())
 
-    fixations_enr, fixations_not_enr = data.get('fixations_enr', pd.DataFrame()), data.get('fixations_not_enr', pd.DataFrame())
-    gaze_enr = data.get('gaze', pd.DataFrame()) # Get enriched gaze data
-    gaze_not_enr = data.get('gaze_not_enr', pd.DataFrame()) # Aggiungi questa riga per inizializzare gaze_not_enr
-    pupil_df = data.get('pupil', pd.DataFrame()) # Get pupil data
-    blinks_df = data.get('blinks', pd.DataFrame()) # Get blinks data
-    saccades_df = data.get('saccades', pd.DataFrame()) # Get saccades data
-    
-    fixations_for_plots = pd.DataFrame()
+    # --- Plot Pupillometria (Originale: Destro e Sinistro separati) ---
+    # Questo plot è presente in entrambe le versioni ma viene consolidato qui.
+    if not pupil_df.empty and ('pupil diameter left [mm]' in pupil_df.columns or 'pupil diameter right [mm]' in pupil_df.columns):
+        if not un_enriched_mode and not gaze_enr.empty and 'gaze detected on surface' in gaze_enr.columns:
+            gaze_enr_unique_ts = gaze_enr.drop_duplicates(subset=['timestamp [ns]']).copy()
+            pupil_with_gaze_status = pd.merge(
+                pupil_df,
+                gaze_enr_unique_ts[['timestamp [ns]', 'gaze detected on surface']],
+                on='timestamp [ns]',
+                how='left'
+            )
+            pupil_with_gaze_status['gaze detected on surface'] = pupil_with_gaze_status['gaze detected on surface'].fillna(False)
+            pupil_plot_df = pupil_with_gaze_status
+        else:
+            pupil_plot_df = pupil_df.copy()
+            pupil_plot_df['gaze detected on surface'] = False # Default to False if no enriched data or un_enriched_mode
 
-    if not un_enriched_mode and not fixations_enr.empty and 'fixation detected on surface' in fixations_enr.columns:
-        fixations_for_plots = fixations_enr[fixations_enr['fixation detected on surface'] == True].copy()
-    elif not fixations_not_enr.empty:
-        fixations_for_plots = fixations_not_enr.copy()
-
-    # --- Pupillometry Plot with Gaze On Surface Indicator ---
-    if not pupil_df.empty and 'pupil diameter left [mm]' in pupil_df.columns:
-        # Merge pupil data with enriched gaze data to get 'gaze detected on surface' status
-        # This assumes that 'timestamp [ns]' is the common column and sufficiently aligned.
-        
-        # Ensure timestamps are unique in gaze_enr for merging
-        gaze_enr_unique_ts = gaze_enr.drop_duplicates(subset=['timestamp [ns]']).copy()
-        
-        pupil_with_gaze_status = pd.merge(
-            pupil_df,
-            gaze_enr_unique_ts[['timestamp [ns]', 'gaze detected on surface']],
-            on='timestamp [ns]',
-            how='left'
-        )
-        # Fill NaN in 'gaze detected on surface' if no direct match, assume False if not detected
-        pupil_with_gaze_status['gaze detected on surface'] = pupil_with_gaze_status['gaze detected on surface'].fillna(False)
-
-        if not pupil_with_gaze_status.empty:
+        if not pupil_plot_df.empty:
             plt.figure(figsize=(12, 6))
             
-            # Plot left pupil diameter
-            if 'pupil diameter left [mm]' in pupil_with_gaze_status.columns:
-                plt.plot(pupil_with_gaze_status['timestamp [ns]'] / NS_TO_S, pupil_with_gaze_status['pupil diameter left [mm]'], label='Pupil Diameter Left [mm]', color='blue', alpha=0.7)
-            
-            # Plot right pupil diameter (if available)
-            if 'pupil diameter right [mm]' in pupil_with_gaze_status.columns:
-                plt.plot(pupil_with_gaze_status['timestamp [ns]'] / NS_TO_S, pupil_with_gaze_status['pupil diameter right [mm]'], label='Pupil Diameter Right [mm]', color='purple', alpha=0.7)
+            if 'pupil diameter left [mm]' in pupil_plot_df.columns:
+                plt.plot(pupil_plot_df['timestamp [ns]'] / NS_TO_S, pupil_plot_df['pupil diameter left [mm]'], label='Pupil Diameter Left [mm]', color='blue', alpha=0.7)
+            if 'pupil diameter right [mm]' in pupil_plot_df.columns:
+                plt.plot(pupil_plot_df['timestamp [ns]'] / NS_TO_S, pupil_plot_df['pupil diameter right [mm]'], label='Pupil Diameter Right [mm]', color='purple', alpha=0.7)
 
-            # Color background based on 'gaze detected on surface'
-            current_status = None
-            start_time = None
+            if 'gaze detected on surface' in pupil_plot_df.columns and not un_enriched_mode:
+                timestamps_seconds = pupil_plot_df['timestamp [ns]'] / NS_TO_S
+                # Ensure timestamps_seconds is not empty and has enough points
+                if len(timestamps_seconds) > 1:
+                    epsilon = (timestamps_seconds.iloc[1] - timestamps_seconds.iloc[0]) / 2
+                else:
+                    epsilon = 0.01 # Small default epsilon
 
-            timestamps_seconds = pupil_with_gaze_status['timestamp [ns]'] / NS_TO_S
-            epsilon = (timestamps_seconds.iloc[1] - timestamps_seconds.iloc[0]) / 2 if len(timestamps_seconds) > 1 else 0.01
+                current_status = None
+                start_time = None
 
-            for i, row in pupil_with_gaze_status.iterrows():
-                ts = row['timestamp [ns]'] / NS_TO_S
-                gaze_on_surface = row['gaze detected on surface']
+                # Consolidated background coloring logic from generate_plots_2 (more robust)
+                for i, row in pupil_plot_df.iterrows():
+                    ts = row['timestamp [ns]'] / NS_TO_S
+                    gaze_on_surface = row['gaze detected on surface']
 
-                if current_status is None:
-                    current_status = gaze_on_surface
-                    start_time = ts
-                elif gaze_on_surface != current_status:
+                    if current_status is None:
+                        current_status = gaze_on_surface
+                        start_time = ts
+                    elif gaze_on_surface != current_status:
+                        color = 'lightgreen' if current_status else 'lightcoral'
+                        plt.axvspan(start_time - epsilon, ts - epsilon, facecolor=color, alpha=0.3, lw=0)
+                        current_status = gaze_on_surface
+                        start_time = ts
+                
+                if start_time is not None and not timestamps_seconds.empty:
                     color = 'lightgreen' if current_status else 'lightcoral'
-                    plt.axvspan(start_time - epsilon, ts - epsilon, facecolor=color, alpha=0.5)
-                    current_status = gaze_on_surface
-                    start_time = ts
-            
-            if start_time is not None:
-                color = 'lightgreen' if current_status else 'lightcoral'
-                plt.axvspan(start_time - epsilon, timestamps_seconds.iloc[-1] + epsilon, facecolor=color, alpha=0.5)
+                    plt.axvspan(start_time - epsilon, timestamps_seconds.iloc[-1] + epsilon, facecolor=color, alpha=0.3, lw=0)
 
             plt.title(f"Pupil Diameter with Gaze On Surface - {subj_name} - {event_name}", fontsize=15)
             plt.xlabel('Time [s]', fontsize=12)
@@ -271,86 +263,114 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
             plt.savefig(output_dir / f'pupil_diameter_gaze_surface_{subj_name}_{event_name}.pdf')
             plt.close()
         else:
-            print(f"ATTENZIONE: Nessun dato pupillare arricchito disponibile per l'evento '{event_name}' per il grafico con indicatore di superficie.")
+            print(f"ATTENZIONE: Dati pupillari insufficienti per l'evento '{event_name}'. Nessun grafico generato.")
 
-    # Periodogramma e Spettrogramma
-    if 'pupil' in data and not data['pupil'].empty and 'pupil diameter left [mm]' in data['pupil'].columns:
-        ts = data['pupil']['pupil diameter left [mm]'].dropna().to_numpy()
-        if len(ts) > SAMPLING_FREQ:
-            freqs, Pxx = welch(ts, fs=SAMPLING_FREQ, nperseg=min(len(ts), 100))
-            plt.figure(figsize=(10, 5)); plt.semilogy(freqs, Pxx); plt.title(f'Periodogram - {subj_name} - {event_name}'); plt.xlabel('Frequency [Hz]'); plt.ylabel('Power Spectral Density [V^2/Hz]'); plt.grid(True); plt.savefig(output_dir / f'periodogram_{subj_name}_{event_name}.pdf'); plt.close()
+    # --- Plot Pupillometria (Media di Destro e Sinistro) ---
+    # Questo è un plot unico di generate_plots_2, aggiunto qui.
+    if not pupil_df.empty and 'pupil diameter left [mm]' in pupil_df.columns and 'pupil diameter right [mm]' in pupil_df.columns and not un_enriched_mode:
+        pupil_df_mean = pupil_df.copy()
+        pupil_df_mean['pupil_diameter_mean'] = pupil_df_mean[['pupil diameter left [mm]', 'pupil diameter right [mm]']].mean(axis=1)
+
+        gaze_enr_unique_ts = gaze_enr.drop_duplicates(subset=['timestamp [ns]']).copy()
+        pupil_with_gaze_status = pd.merge(pupil_df_mean, gaze_enr_unique_ts[['timestamp [ns]', 'gaze detected on surface']], on='timestamp [ns]', how='left')
+        pupil_with_gaze_status['gaze detected on surface'] = pupil_with_gaze_status['gaze detected on surface'].fillna(False)
+        pupil_with_gaze_status.dropna(subset=['pupil_diameter_mean'], inplace=True)
+        pupil_with_gaze_status.reset_index(drop=True, inplace=True)
+
+        if not pupil_with_gaze_status.empty:
+            plt.figure(figsize=(12, 6))
+            plt.plot(pupil_with_gaze_status['timestamp [ns]'] / NS_TO_S, pupil_with_gaze_status['pupil_diameter_mean'], label='Mean Pupil Diameter [mm]', color='black', alpha=0.8)
+
+            timestamps_seconds = pupil_with_gaze_status['timestamp [ns]'] / NS_TO_S
+            epsilon = (timestamps_seconds.diff().mean() / 2) if len(timestamps_seconds) > 1 else 0.01
             
-            f, t, Sxx = spectrogram(ts, fs=SAMPLING_FREQ, nperseg=min(len(ts), 256), noverlap=min(len(ts)//2, 50))
-            plt.figure(figsize=(10, 5)); plt.pcolormesh(t, f, 10 * np.log10(np.maximum(Sxx, 1e-10)), shading='gouraud'); plt.title(f'Spectrogram - {subj_name} - {event_name}'); plt.ylabel('Frequency [Hz]'); plt.xlabel('Time [s]'); plt.colorbar(label='Power [dB]'); plt.savefig(output_dir / f'spectrogram_{subj_name}_{event_name}.pdf'); plt.close()
+            # Background coloring logic (identical to above, but applied to mean plot)
+            start_time = timestamps_seconds.iloc[0] if not timestamps_seconds.empty else None
+            current_status = pupil_with_gaze_status.iloc[0]['gaze detected on surface'] if not pupil_with_gaze_status.empty else None
+            
+            if start_time is not None and current_status is not None:
+                for i in range(1, len(pupil_with_gaze_status)):
+                    if pupil_with_gaze_status.iloc[i]['gaze detected on surface'] != current_status:
+                        end_time = timestamps_seconds.iloc[i]
+                        color = 'lightgreen' if current_status else 'lightcoral'
+                        plt.axvspan(start_time - epsilon, end_time - epsilon, facecolor=color, alpha=0.3, lw=0)
+                        start_time = end_time
+                        current_status = pupil_with_gaze_status.iloc[i]['gaze detected on surface']
+                color = 'lightgreen' if current_status else 'lightcoral'
+                plt.axvspan(start_time - epsilon, timestamps_seconds.iloc[-1] + epsilon, facecolor=color, alpha=0.3, lw=0)
 
-    # Istogrammi
-    if 'blinks' in data and not data['blinks'].empty and 'duration [ms]' in data['blinks'].columns:
-        _plot_histogram(data['blinks']['duration [ms]'], f"Blink Duration Histogram - {subj_name} - {event_name}", "Duration [ms]", output_dir / f'hist_blinks_{subj_name}_{event_name}.pdf')
-    if 'saccades' in data and not data['saccades'].empty and 'duration [ms]' in data['saccades'].columns:
-        _plot_histogram(data['saccades']['duration [ms]'], f"Saccade Duration Histogram - {subj_name} - {event_name}", "Duration [ms]", output_dir / f'hist_saccades_{subj_name}_{event_name}.pdf')
+            plt.title(f"Mean Pupil Diameter with Gaze On Surface - {subj_name} - {event_name}", fontsize=15)
+            plt.xlabel('Time [s]'); plt.ylabel('Mean Pupil Diameter [mm]'); plt.legend(); plt.grid(axis='y', linestyle='--', alpha=0.7); plt.tight_layout()
+            plt.savefig(output_dir / f'pupil_diameter_mean_gaze_surface_{subj_name}_{event_name}.pdf'); plt.close()
+        else:
+            print(f"ATTENZIONE: Dati medi pupillari insufficienti per l'evento '{event_name}'. Nessun grafico generato.")
 
-    # Grafici di percorso (Fixation Path)
-    # Fixation Path - Enriched
+    # --- Periodogramma e Spettrogramma ---
+    if not pupil_df.empty and 'pupil diameter left [mm]' in pupil_df.columns:
+        ts = pupil_df['pupil diameter left [mm]'].dropna().to_numpy()
+        if len(ts) > SAMPLING_FREQ:
+            try:
+                freqs, Pxx = welch(ts, fs=SAMPLING_FREQ, nperseg=min(len(ts), 100))
+                plt.figure(figsize=(10, 5)); plt.semilogy(freqs, Pxx); plt.title(f'Periodogram - {subj_name} - {event_name}'); plt.xlabel('Frequency [Hz]'); plt.ylabel('Power Spectral Density [V^2/Hz]'); plt.grid(True); plt.savefig(output_dir / f'periodogram_{subj_name}_{event_name}.pdf'); plt.close()
+                
+                f, t, Sxx = spectrogram(ts, fs=SAMPLING_FREQ, nperseg=min(len(ts), 256), noverlap=min(len(ts)//2, 50))
+                plt.figure(figsize=(10, 5)); plt.pcolormesh(t, f, 10 * np.log10(np.maximum(Sxx, 1e-10)), shading='gouraud'); plt.title(f'Spectrogram - {subj_name} - {event_name}'); plt.ylabel('Frequency [Hz]'); plt.xlabel('Time [s]'); plt.colorbar(label='Power [dB]'); plt.savefig(output_dir / f'spectrogram_{subj_name}_{event_name}.pdf'); plt.close()
+            except Exception as e:
+                print(f"ATTENZIONE: Impossibile generare periodogramma/spettrogramma per '{event_name}'. Errore: {e}")
+        else:
+            print(f"ATTENZIONE: Dati pupillari insufficienti per periodogramma/spettrogramma per l'evento '{event_name}'.")
+
+    # --- Istogrammi ---
+    # Fixation Histograms (from generate_plots_2)
+    if not un_enriched_mode and not fixations_enr.empty and 'duration [ms]' in fixations_enr.columns:
+        fixations_on_surface = fixations_enr[fixations_enr['fixation detected on surface'] == True]
+        if not fixations_on_surface.empty:
+            _plot_histogram(fixations_on_surface['duration [ms]'], f"Fixation Duration (Enriched on Surface) - {subj_name} - {event_name}", "Duration [ms]", output_dir / f'hist_fixations_enriched_{subj_name}_{event_name}.pdf')
+    if not fixations_not_enr.empty and 'duration [ms]' in fixations_not_enr.columns:
+        _plot_histogram(fixations_not_enr['duration [ms]'], f"Fixation Duration (Un-enriched) - {subj_name} - {event_name}", "Duration [ms]", output_dir / f'hist_fixations_not_enriched_{subj_name}_{event_name}.pdf')
+
+    # Blinks and Saccades Histograms (consolidated)
+    if not blinks_df.empty and 'duration [ms]' in blinks_df.columns:
+        _plot_histogram(blinks_df['duration [ms]'], f"Blink Duration Histogram - {subj_name} - {event_name}", "Duration [ms]", output_dir / f'hist_blinks_{subj_name}_{event_name}.pdf')
+    if not saccades_df.empty and 'duration [ms]' in saccades_df.columns:
+        _plot_histogram(saccades_df['duration [ms]'], f"Saccade Duration Histogram - {subj_name} - {event_name}", "Duration [ms]", output_dir / f'hist_saccades_{subj_name}_{event_name}.pdf')
+
+    # --- Grafici di percorso (Fixation Path) ---
     if not un_enriched_mode and not fixations_enr.empty and 'fixation x [normalized]' in fixations_enr.columns:
-        fixations_enriched_on_surface = fixations_enr[fixations_enr['fixation detected on surface'] == True].copy()
-        if not fixations_enriched_on_surface.empty:
-            plt.figure(figsize=(10, 6))
-            plt.plot(fixations_enriched_on_surface['fixation x [normalized]'], fixations_enriched_on_surface['fixation y [normalized]'], marker='o', linestyle='-', color='green')
-            plt.title(f"Fixation Path (Enriched) - {subj_name} - {event_name}"); plt.xlabel('Normalized X'); plt.ylabel('Normalized Y'); plt.grid(True)
-            plt.savefig(output_dir / f'path_fixation_enriched_{subj_name}_{event_name}.pdf')
-            plt.close()
+        enriched_on_surface = fixations_enr[fixations_enr['fixation detected on surface'] == True]
+        if not enriched_on_surface.empty:
+            plt.figure(figsize=(10, 6)); plt.plot(enriched_on_surface['fixation x [normalized]'], enriched_on_surface['fixation y [normalized]'], marker='o', linestyle='-', color='green'); plt.title(f"Fixation Path (Enriched) - {subj_name} - {event_name}"); plt.xlabel('Normalized X'); plt.ylabel('Normalized Y'); plt.grid(True); plt.savefig(output_dir / f'path_fixation_enriched_{subj_name}_{event_name}.pdf'); plt.close()
         else:
             print(f"ATTENZIONE: Nessuna fissazione arricchita rilevata sulla superficie per l'evento '{event_name}'. Nessun grafico generato.")
 
-    # Fixation Path - Un-enriched
     if not fixations_not_enr.empty and 'fixation x [px]' in fixations_not_enr.columns:
         plt.figure(figsize=(10, 6))
         
         x_coords_px = fixations_not_enr['fixation x [px]']
         y_coords_px = fixations_not_enr['fixation y [px]']
 
-        # Normalizzazione se le dimensioni del video sono disponibili
         if video_width and video_height and video_width > 0 and video_height > 0:
-            x_coords_norm = x_coords_px / video_width
-            y_coords_norm = y_coords_px / video_height
+            x_coords, y_coords = x_coords_px / video_width, y_coords_px / video_height
             xlabel_text, ylabel_text = 'Normalized X', 'Normalized Y'
         else:
-            x_coords_norm, y_coords_norm = x_coords_px, y_coords_px
+            x_coords, y_coords = x_coords_px, y_coords_px
             xlabel_text, ylabel_text = 'Pixel X', 'Pixel Y'
             print("ATTENZIONE: Le coordinate delle fissazioni non arricchite sono in pixel e le dimensioni del video non sono disponibili per la normalizzazione.")
 
-        plt.plot(x_coords_norm, y_coords_norm, marker='o', linestyle='-', color='purple')
+        plt.plot(x_coords, y_coords, marker='o', linestyle='-', color='purple')
         plt.title(f"Fixation Path (Un-enriched) - {subj_name} - {event_name}"); plt.xlabel(xlabel_text); plt.ylabel(ylabel_text); plt.grid(True)
         plt.savefig(output_dir / f'path_fixation_not_enriched_{subj_name}_{event_name}.pdf')
         plt.close()
     else:
         print(f"ATTENZIONE: Dati di fissazione non arricchiti insufficienti per l'evento '{event_name}'. Nessun grafico generato.")
     
-    # Grafici di percorso (Gaze Path)
-    gaze_for_plots = pd.DataFrame()
-    if not un_enriched_mode and not gaze_enr.empty and 'gaze position on surface x [normalized]' in gaze_enr.columns:
-        gaze_for_plots = gaze_enr[gaze_enr['gaze detected on surface'] == True].copy()
-        if not gaze_for_plots.empty:
-            plt.figure(figsize=(10, 6))
-            plt.plot(gaze_for_plots['gaze position on surface x [normalized]'], gaze_for_plots['gaze position on surface y [normalized]'], marker='.', linestyle='-', color='red', alpha=0.5)
-            plt.title(f"Gaze Path - {subj_name} - {event_name}"); plt.xlabel('Normalized X'); plt.ylabel('Normalized Y'); plt.grid(True)
-            plt.savefig(output_dir / f'path_gaze_enriched_{subj_name}_{event_name}.pdf')
-            plt.close()
-
-    # Gaze Path - Un-enriched
-    plt.figure(figsize=(10, 6))
-    plt.plot(gaze_not_enr['gaze x [px]'], gaze_not_enr['gaze y [px]'], marker='.', linestyle='-', color='red', alpha=0.5)
-    plt.title(f"Gaze Path - {subj_name} - {event_name}"); plt.xlabel('X'); plt.ylabel('Y'); plt.grid(True)
-    plt.savefig(output_dir / f'path_gaze_not_enriched_{subj_name}_{event_name}.pdf')
-    plt.close()
-    
-# --- Grafici di percorso (Gaze Path) ---
+    # --- Grafici di percorso (Gaze Path) ---
     if not un_enriched_mode and not gaze_enr.empty and 'gaze position on surface x [normalized]' in gaze_enr.columns:
         gaze_on_surface = gaze_enr[gaze_enr['gaze detected on surface'] == True]
         if not gaze_on_surface.empty:
             plt.figure(figsize=(10, 6)); plt.plot(gaze_on_surface['gaze position on surface x [normalized]'], gaze_on_surface['gaze position on surface y [normalized]'], marker='.', linestyle='-', color='red', alpha=0.5); plt.title(f"Gaze Path (Enriched) - {subj_name} - {event_name}"); plt.xlabel('Normalized X'); plt.ylabel('Normalized Y'); plt.grid(True); plt.savefig(output_dir / f'path_gaze_enriched_{subj_name}_{event_name}.pdf'); plt.close()
-    
-    # MODIFICA QUI: Aggiunto fallback a coordinate [norm]
+
+    # Un-enriched Gaze Path (improved logic from generate_plots_2)
     if not gaze_not_enr.empty:
         x_col, y_col, coords_type = None, None, None
         if 'gaze position x [px]' in gaze_not_enr.columns and 'gaze position y [px]' in gaze_not_enr.columns:
@@ -362,7 +382,7 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
             plt.figure(figsize=(10, 6))
             x, y = gaze_not_enr[x_col], gaze_not_enr[y_col]
             
-            if coords_type == 'pixel' and video_width and video_height:
+            if coords_type == 'pixel' and video_width and video_height and video_width > 0 and video_height > 0:
                 x, y = x / video_width, y / video_height
                 xlabel, ylabel = 'Normalized X', 'Normalized Y'
             elif coords_type == 'normalized':
@@ -374,9 +394,12 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
             plt.title(f"Gaze Path (Un-enriched) - {subj_name} - {event_name}")
             plt.xlabel(xlabel); plt.ylabel(ylabel); plt.grid(True)
             plt.savefig(output_dir / f'path_gaze_not_enriched_{subj_name}_{event_name}.pdf'); plt.close()
+        else:
+            print(f"ATTENZIONE: Colonne di sguardo non arricchite ('gaze position x [px]' o 'gaze x [norm]') non trovate per l'evento '{event_name}'.")
+    else:
+        print(f"ATTENZIONE: Dati di sguardo non arricchiti insufficienti per l'evento '{event_name}'. Nessun grafico generato.")
 
-
-    # --- Plot per Figure 5 (Saccade Velocities) ---
+    # --- Plot Saccade Velocities ---
     if not saccades_df.empty and 'mean velocity [px/s]' in saccades_df.columns and 'peak velocity [px/s]' in saccades_df.columns:
         plt.figure(figsize=(10, 6))
         plt.plot(saccades_df.index, saccades_df['mean velocity [px/s]'], label='mean velocity', color='blue')
@@ -392,7 +415,7 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
     else:
         print(f"ATTENZIONE: Dati di velocità delle saccadi insufficienti per l'evento '{event_name}'.")
 
-    # --- Plot per Figure 6 (Saccade Amplitude) ---
+    # --- Plot Saccade Amplitude ---
     if not saccades_df.empty and 'amplitude [px]' in saccades_df.columns:
         plt.figure(figsize=(10, 6))
         plt.plot(saccades_df.index, saccades_df['amplitude [px]'], label='amplitude', color='teal')
@@ -407,10 +430,8 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
     else:
         print(f"ATTENZIONE: Dati di ampiezza delle saccadi insufficienti per l'evento '{event_name}'.")
 
-    # --- Plot per Figure 7 (Blink Time Series) ---
+    # --- Plot Blink Time Series ---
     if not blinks_df.empty and 'start timestamp [ns]' in blinks_df.columns and 'duration [ms]' in blinks_df.columns:
-        # Create a time series for blinks (binary: 0 or 1)
-        # Find the overall start and end timestamps for the segment to define the plot range
         all_timestamps = []
         if 'timestamp [ns]' in pupil_df.columns:
             all_timestamps.extend(pupil_df['timestamp [ns]'].tolist())
@@ -426,10 +447,6 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
         min_ts = min(all_timestamps)
         max_ts = max(all_timestamps)
 
-        # Create a series with 0s for the entire duration of the segment
-        # We need a granular timestamp array to represent each 'frame' or a small interval
-        # Let's use the sampling frequency to estimate the number of points needed
-        # Assuming SAMPLING_FREQ is the rate for gaze/pupil data, we can use it for time resolution
         duration_s = (max_ts - min_ts) / NS_TO_S
         num_points = int(duration_s * SAMPLING_FREQ)
         
@@ -437,7 +454,6 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
             print(f"ATTENZIONE: Durata del segmento troppo breve per generare la serie temporale dei blink per l'evento '{event_name}'.")
             return
 
-        # Create a time axis for the plot (frames or a scaled time)
         time_axis_s = np.linspace(0, duration_s, num_points)
         blink_time_series = np.zeros(num_points)
 
@@ -445,12 +461,11 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
             blink_start_ns = row['start timestamp [ns]']
             blink_end_ns = blink_start_ns + (row['duration [ms]'] * 1_000_000) # Convert ms to ns
 
-            # Map blink timestamps to the time_axis_s indices
             start_idx = int(((blink_start_ns - min_ts) / NS_TO_S) * SAMPLING_FREQ)
             end_idx = int(((blink_end_ns - min_ts) / NS_TO_S) * SAMPLING_FREQ)
 
             start_idx = max(0, start_idx)
-            end_idx = min(num_points, end_idx) # Ensure index doesn't exceed array bounds
+            end_idx = min(num_points, end_idx)
 
             if start_idx < end_idx:
                 blink_time_series[start_idx:end_idx] = 1
@@ -460,105 +475,29 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
         plt.title(f'Blink Time Series - {subj_name} - {event_name}', fontsize=15)
         plt.xlabel('Time [s]', fontsize=12)
         plt.ylabel('Blink (0 = No, 1 = Yes)', fontsize=12)
-        plt.yticks([0, 1]) # Ensure y-axis only shows 0 and 1
+        plt.yticks([0, 1])
         plt.grid(axis='y', linestyle='--', alpha=0.7)
-        plt.ylim(-0.1, 1.1) # Add a small buffer for better visualization
+        plt.ylim(-0.1, 1.1)
         plt.tight_layout()
         plt.savefig(output_dir / f'blink_time_series_{subj_name}_{event_name}.pdf')
         plt.close()
     else:
         print(f"ATTENZIONE: Dati di blink insufficienti per l'evento '{event_name}'.")
 
-
-    # --- Heatmaps di densità (come Figura 2) ---
-    # Questa sezione genera heatmap che mostrano la densità dei punti di fissazione e di sguardo,
-    # sia per dati arricchiti (normalizzati) che non arricchiti (pixel o normalizzati da pixel).
-
+    # --- Heatmaps di densità ---
     # Heatmap delle Fissazioni (Arricchite, su superficie)
     if not un_enriched_mode and not fixations_enr.empty and 'fixation x [normalized]' in fixations_enr.columns:
         fixations_enriched_on_surface = fixations_enr[fixations_enr['fixation detected on surface'] == True].copy()
-        if not fixations_enriched_on_surface.empty:
-            x = fixations_enriched_on_surface['fixation x [normalized]'].dropna()
-            y = fixations_enriched_on_surface['fixation y [normalized]'].dropna()
-            
-            if len(x) > 2:
-                try:
-                    k = gaussian_kde(np.vstack([x, y]))
-                    xi, yi = np.mgrid[0:1:100j, 0:1:100j]
-                    zi = k(np.vstack([xi.flatten(), yi.flatten()]))
-
-                    plt.figure(figsize=(10, 8))
-                    plt.pcolormesh(xi, yi, zi.reshape(xi.shape), shading='auto', cmap='Reds', alpha=0.8)
-                    plt.plot(x, y, 'k.', markersize=4, alpha=0.4)
-                    plt.title(f"Fixation Density Heatmap (Enriched) - {subj_name} - {event_name}", fontsize=15)
-                    plt.xlabel('Normalized X'); plt.ylabel('Normalized Y')
-                    plt.xlim(0, 1); plt.ylim(0, 1)
-                    plt.grid(True, linestyle='--', alpha=0.5); plt.tight_layout()
-                    plt.savefig(output_dir / f'heatmap_fixation_enriched_{subj_name}_{event_name}.pdf'); plt.close()
-                except np.linalg.LinAlgError:
-                    print(f"ATTENZIONE: Impossibile generare heatmap per fissazioni arricchite (matrice singolare).")
+        plot_heatmap(fixations_enriched_on_surface['fixation x [normalized]'], fixations_enriched_on_surface['fixation y [normalized]'], 
+                     f"Fixation Density Heatmap (Enriched) - {subj_name} - {event_name}", 
+                     output_dir / f'heatmap_fixation_enriched_{subj_name}_{event_name}.pdf', xlim=(0, 1), ylim=(0, 1), 
+                     xlabel='Normalized X', ylabel='Normalized Y')
 
     # Heatmap delle Fissazioni (Non Arricchite)
     if not fixations_not_enr.empty and 'fixation x [px]' in fixations_not_enr.columns:
         x_px = fixations_not_enr['fixation x [px]'].dropna()
         y_px = fixations_not_enr['fixation y [px]'].dropna()
 
-        if len(x_px) > 2:
-            if video_width and video_height and video_width > 0 and video_height > 0:
-                x_coords, y_coords = x_px / video_width, y_px / video_height
-                xlabel_text, ylabel_text = 'Normalized X', 'Normalized Y'
-                xlim, ylim = (0, 1), (0, 1)
-            else:
-                x_coords, y_coords = x_px, y_px
-                xlabel_text, ylabel_text = 'Pixel X', 'Pixel Y'
-                xlim, ylim = (0, x_coords.max()), (0, y_coords.max())
-
-            try:
-                k = gaussian_kde(np.vstack([x_coords, y_coords]))
-                xi, yi = np.mgrid[xlim[0]:xlim[1]:100j, ylim[0]:ylim[1]:100j]
-                zi = k(np.vstack([xi.flatten(), yi.flatten()]))
-
-                plt.figure(figsize=(10, 8))
-                plt.pcolormesh(xi, yi, zi.reshape(xi.shape), shading='auto', cmap='Reds', alpha=0.8)
-                plt.plot(x_coords, y_coords, 'k.', markersize=4, alpha=0.4)
-                plt.title(f"Fixation Density Heatmap (Un-enriched) - {subj_name} - {event_name}", fontsize=15)
-                plt.xlabel(xlabel_text); plt.ylabel(ylabel_text)
-                plt.xlim(xlim); plt.ylim(ylim)
-                plt.grid(True, linestyle='--', alpha=0.5); plt.tight_layout()
-                plt.savefig(output_dir / f'heatmap_fixation_not_enriched_{subj_name}_{event_name}.pdf'); plt.close()
-            except np.linalg.LinAlgError:
-                print(f"ATTENZIONE: Impossibile generare heatmap per fissazioni non arricchite (matrice singolare).")
-
-    # Heatmap dello Sguardo (Arricchito, su superficie)
-    if not un_enriched_mode and not gaze_enr.empty and 'gaze position on surface x [normalized]' in gaze_enr.columns:
-        gaze_on_surface = gaze_enr[gaze_enr['gaze detected on surface'] == True].copy()
-        if not gaze_on_surface.empty:
-            x = gaze_on_surface['gaze position on surface x [normalized]'].dropna()
-            y = gaze_on_surface['gaze position on surface y [normalized]'].dropna()
-
-            if len(x) > 2:
-                try:
-                    k = gaussian_kde(np.vstack([x, y]))
-                    xi, yi = np.mgrid[0:1:100j, 0:1:100j]
-                    zi = k(np.vstack([xi.flatten(), yi.flatten()]))
-                    
-                    plt.figure(figsize=(10, 8))
-                    plt.pcolormesh(xi, yi, zi.reshape(xi.shape), shading='auto', cmap='Reds', alpha=0.8)
-                    plt.plot(x, y, 'k.', markersize=2, alpha=0.2)
-                    plt.title(f"Gaze Density Heatmap (Enriched) - {subj_name} - {event_name}", fontsize=15)
-                    plt.xlabel('Normalized X'); plt.ylabel('Normalized Y')
-                    plt.xlim(0, 1); plt.ylim(0, 1)
-                    plt.grid(True, linestyle='--', alpha=0.5); plt.tight_layout()
-                    plt.savefig(output_dir / f'heatmap_gaze_enriched_{subj_name}_{event_name}.pdf'); plt.close()
-                except np.linalg.LinAlgError:
-                    print(f"ATTENZIONE: Impossibile generare heatmap per sguardi arricchiti (matrice singolare).")
-
-    # Heatmap dello Sguardo (Non Arricchito)
-    
-    x_px = gaze_not_enr['gaze x [px]'].dropna()
-    y_px = gaze_not_enr['gaze y [px]'].dropna()
-    
-    if len(x_px) > 2:
         if video_width and video_height and video_width > 0 and video_height > 0:
             x_coords, y_coords = x_px / video_width, y_px / video_height
             xlabel_text, ylabel_text = 'Normalized X', 'Normalized Y'
@@ -566,209 +505,22 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
         else:
             x_coords, y_coords = x_px, y_px
             xlabel_text, ylabel_text = 'Pixel X', 'Pixel Y'
-            xlim, ylim = (0, x_coords.max()), (0, y_coords.max())
+            xlim, ylim = (None, None), (None, None) # Let plot_heatmap determine based on data
+            print("ATTENZIONE: Le coordinate delle fissazioni non arricchite sono in pixel e le dimensioni del video non sono disponibili per la normalizzazione per heatmap.")
+        
+        plot_heatmap(x_coords, y_coords, f"Fixation Density Heatmap (Un-enriched) - {subj_name} - {event_name}", 
+                     output_dir / f'heatmap_fixation_not_enriched_{subj_name}_{event_name}.pdf', xlim=xlim, ylim=ylim, 
+                     xlabel=xlabel_text, ylabel=ylabel_text)
 
-        try:
-            k = gaussian_kde(np.vstack([x_coords, y_coords]))
-            xi, yi = np.mgrid[xlim[0]:xlim[1]:100j, ylim[0]:ylim[1]:100j]
-            zi = k(np.vstack([xi.flatten(), yi.flatten()]))
-
-            plt.figure(figsize=(10, 8))
-            plt.pcolormesh(xi, yi, zi.reshape(xi.shape), shading='auto', cmap='Reds', alpha=0.8)
-            plt.plot(x_coords, y_coords, 'k.', markersize=2, alpha=0.2)
-            plt.title(f"Gaze Density Heatmap (Un-enriched) - {subj_name} - {event_name}", fontsize=15)
-            plt.xlabel(xlabel_text); plt.ylabel(ylabel_text)
-            plt.xlim(xlim); plt.ylim(ylim)
-            plt.grid(True, linestyle='--', alpha=0.5); plt.tight_layout()
-            plt.savefig(output_dir / f'heatmap_gaze_not_enriched_{subj_name}_{event_name}.pdf'); plt.close()
-        except np.linalg.LinAlgError:
-            print(f"ATTENZIONE: Impossibile generare heatmap per sguardi non arricchiti (matrice singolare).")
-
-def generate_plots_2(data, movements_df, subj_name, event_name, output_dir: Path, un_enriched_mode: bool, video_width: int, video_height: int):
-    """Genera e salva tutti i grafici per l'evento."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    fixations_enr, fixations_not_enr = data.get('fixations_enr', pd.DataFrame()), data.get('fixations_not_enr', pd.DataFrame())
-    gaze_enr, gaze_not_enr = data.get('gaze', pd.DataFrame()), data.get('gaze_not_enr', pd.DataFrame())
-    pupil_df, blinks_df, saccades_df = data.get('pupil', pd.DataFrame()), data.get('blinks', pd.DataFrame()), data.get('saccades', pd.DataFrame())
-
-    # --- Plot Pupillometria (Originale: Destro e Sinistro separati) ---
-    if not pupil_df.empty and 'pupil diameter left [mm]' in pupil_df.columns and not un_enriched_mode:
-        gaze_enr_unique_ts = gaze_enr.drop_duplicates(subset=['timestamp [ns]']).copy()
-        pupil_with_gaze_status = pd.merge(pupil_df, gaze_enr_unique_ts[['timestamp [ns]', 'gaze detected on surface']], on='timestamp [ns]', how='left')
-        pupil_with_gaze_status['gaze detected on surface'] = pupil_with_gaze_status['gaze detected on surface'].fillna(False)
-
-        if not pupil_with_gaze_status.empty:
-            plt.figure(figsize=(12, 6))
-            if 'pupil diameter left [mm]' in pupil_with_gaze_status.columns:
-                plt.plot(pupil_with_gaze_status['timestamp [ns]'] / NS_TO_S, pupil_with_gaze_status['pupil diameter left [mm]'], label='Pupil Diameter Left [mm]', color='blue', alpha=0.7)
-            if 'pupil diameter right [mm]' in pupil_with_gaze_status.columns:
-                plt.plot(pupil_with_gaze_status['timestamp [ns]'] / NS_TO_S, pupil_with_gaze_status['pupil diameter right [mm]'], label='Pupil Diameter Right [mm]', color='purple', alpha=0.7)
-
-            timestamps_seconds = pupil_with_gaze_status['timestamp [ns]'] / NS_TO_S
-            epsilon = (timestamps_seconds.iloc[1] - timestamps_seconds.iloc[0]) / 2 if len(timestamps_seconds) > 1 else 0.01
-            # Background coloring
-            start_time = timestamps_seconds.iloc[0]
-            current_status = pupil_with_gaze_status.iloc[0]['gaze detected on surface']
-            for i in range(1, len(pupil_with_gaze_status)):
-                if pupil_with_gaze_status.iloc[i]['gaze detected on surface'] != current_status:
-                    end_time = timestamps_seconds.iloc[i]
-                    color = 'lightgreen' if current_status else 'lightcoral'
-                    plt.axvspan(start_time - epsilon, end_time - epsilon, facecolor=color, alpha=0.3, lw=0)
-                    start_time = end_time
-                    current_status = pupil_with_gaze_status.iloc[i]['gaze detected on surface']
-            # Color last segment
-            color = 'lightgreen' if current_status else 'lightcoral'
-            plt.axvspan(start_time - epsilon, timestamps_seconds.iloc[-1] + epsilon, facecolor=color, alpha=0.3, lw=0)
-
-
-            plt.title(f"Pupil Diameter with Gaze On Surface - {subj_name} - {event_name}", fontsize=15)
-            plt.xlabel('Time [s]'); plt.ylabel('Pupil Diameter [mm]'); plt.legend(); plt.grid(axis='y', linestyle='--', alpha=0.7); plt.tight_layout()
-            plt.savefig(output_dir / f'pupil_diameter_gaze_surface_{subj_name}_{event_name}.pdf'); plt.close()
-
-    # --- Plot Pupillometria (Media di Destro e Sinistro) ---
-    if not pupil_df.empty and 'pupil diameter left [mm]' in pupil_df.columns and 'pupil diameter right [mm]' in pupil_df.columns and not un_enriched_mode:
-        pupil_df_mean = pupil_df.copy()
-        pupil_df_mean['pupil_diameter_mean'] = pupil_df_mean[['pupil diameter left [mm]', 'pupil diameter right [mm]']].mean(axis=1)
-
-        gaze_enr_unique_ts = gaze_enr.drop_duplicates(subset=['timestamp [ns]']).copy()
-        pupil_with_gaze_status = pd.merge(pupil_df_mean, gaze_enr_unique_ts[['timestamp [ns]', 'gaze detected on surface']], on='timestamp [ns]', how='left')
-        pupil_with_gaze_status['gaze detected on surface'] = pupil_with_gaze_status['gaze detected on surface'].fillna(False)
-        pupil_with_gaze_status.dropna(subset=['pupil_diameter_mean'], inplace=True)
-        pupil_with_gaze_status.reset_index(drop=True, inplace=True)
-
-
-        if not pupil_with_gaze_status.empty:
-            plt.figure(figsize=(12, 6))
-            plt.plot(pupil_with_gaze_status['timestamp [ns]'] / NS_TO_S, pupil_with_gaze_status['pupil_diameter_mean'], label='Mean Pupil Diameter [mm]', color='black', alpha=0.8)
-
-            timestamps_seconds = pupil_with_gaze_status['timestamp [ns]'] / NS_TO_S
-            epsilon = (timestamps_seconds.diff().mean() / 2) if len(timestamps_seconds) > 1 else 0.01
-            
-            # Background coloring
-            start_time = timestamps_seconds.iloc[0]
-            current_status = pupil_with_gaze_status.iloc[0]['gaze detected on surface']
-            for i in range(1, len(pupil_with_gaze_status)):
-                if pupil_with_gaze_status.iloc[i]['gaze detected on surface'] != current_status:
-                    end_time = timestamps_seconds.iloc[i]
-                    color = 'lightgreen' if current_status else 'lightcoral'
-                    plt.axvspan(start_time - epsilon, end_time - epsilon, facecolor=color, alpha=0.3, lw=0)
-                    start_time = end_time
-                    current_status = pupil_with_gaze_status.iloc[i]['gaze detected on surface']
-            # Color last segment
-            color = 'lightgreen' if current_status else 'lightcoral'
-            plt.axvspan(start_time - epsilon, timestamps_seconds.iloc[-1] + epsilon, facecolor=color, alpha=0.3, lw=0)
-
-            plt.title(f"Mean Pupil Diameter with Gaze On Surface - {subj_name} - {event_name}", fontsize=15)
-            plt.xlabel('Time [s]'); plt.ylabel('Mean Pupil Diameter [mm]'); plt.legend(); plt.grid(axis='y', linestyle='--', alpha=0.7); plt.tight_layout()
-            plt.savefig(output_dir / f'pupil_diameter_mean_gaze_surface_{subj_name}_{event_name}.pdf'); plt.close()
-
-    # --- Periodogramma e Spettrogramma ---
-    if 'pupil' in data and not data['pupil'].empty and 'pupil diameter left [mm]' in data['pupil'].columns:
-        ts = data['pupil']['pupil diameter left [mm]'].dropna().to_numpy()
-        if len(ts) > SAMPLING_FREQ:
-            try:
-                freqs, Pxx = welch(ts, fs=SAMPLING_FREQ, nperseg=min(len(ts), 100))
-                plt.figure(figsize=(10, 5)); plt.semilogy(freqs, Pxx); plt.title(f'Periodogram - {subj_name} - {event_name}'); plt.xlabel('Frequency [Hz]'); plt.ylabel('Power Spectral Density [V^2/Hz]'); plt.grid(True); plt.savefig(output_dir / f'periodogram_{subj_name}_{event_name}.pdf'); plt.close()
-                
-                f, t, Sxx = spectrogram(ts, fs=SAMPLING_FREQ, nperseg=min(len(ts), 256), noverlap=min(len(ts)//2, 50))
-                plt.figure(figsize=(10, 5)); plt.pcolormesh(t, f, 10 * np.log10(np.maximum(Sxx, 1e-10)), shading='gouraud'); plt.title(f'Spectrogram - {subj_name} - {event_name}'); plt.ylabel('Frequency [Hz]'); plt.xlabel('Time [s]'); plt.colorbar(label='Power [dB]'); plt.savefig(output_dir / f'spectrogram_{subj_name}_{event_name}.pdf'); plt.close()
-            except Exception as e:
-                print(f"ATTENZIONE: Impossibile generare periodogramma/spettrogramma per '{event_name}'. Errore: {e}")
-
-    # --- Istogrammi separati per Fissazioni (Enriched e Not Enriched) ---
-    if not un_enriched_mode and not fixations_enr.empty and 'duration [ms]' in fixations_enr.columns:
-        fixations_on_surface = fixations_enr[fixations_enr['fixation detected on surface'] == True]
-        if not fixations_on_surface.empty:
-            _plot_histogram(fixations_on_surface['duration [ms]'], f"Fixation Duration (Enriched on Surface) - {subj_name} - {event_name}", "Duration [ms]", output_dir / f'hist_fixations_enriched_{subj_name}_{event_name}.pdf')
-    if not fixations_not_enr.empty and 'duration [ms]' in fixations_not_enr.columns:
-        _plot_histogram(fixations_not_enr['duration [ms]'], f"Fixation Duration (Un-enriched) - {subj_name} - {event_name}", "Duration [ms]", output_dir / f'hist_fixations_not_enriched_{subj_name}_{event_name}.pdf')
-
-    if 'blinks' in data and not data['blinks'].empty:
-        _plot_histogram(data['blinks']['duration [ms]'], f"Blink Duration Histogram - {subj_name} - {event_name}", "Duration [ms]", output_dir / f'hist_blinks_{subj_name}_{event_name}.pdf')
-    if 'saccades' in data and not data['saccades'].empty:
-        _plot_histogram(data['saccades']['duration [ms]'], f"Saccade Duration Histogram - {subj_name} - {event_name}", "Duration [ms]", output_dir / f'hist_saccades_{subj_name}_{event_name}.pdf')
-
-    # --- Grafici di percorso (Fixation Path) ---
-    if not un_enriched_mode and not fixations_enr.empty and 'fixation x [normalized]' in fixations_enr.columns:
-        enriched_on_surface = fixations_enr[fixations_enr['fixation detected on surface'] == True]
-        if not enriched_on_surface.empty:
-            plt.figure(figsize=(10, 6)); plt.plot(enriched_on_surface['fixation x [normalized]'], enriched_on_surface['fixation y [normalized]'], marker='o', linestyle='-', color='green'); plt.title(f"Fixation Path (Enriched) - {subj_name} - {event_name}"); plt.xlabel('Normalized X'); plt.ylabel('Normalized Y'); plt.grid(True); plt.savefig(output_dir / f'path_fixation_enriched_{subj_name}_{event_name}.pdf'); plt.close()
-    if not fixations_not_enr.empty and 'fixation x [px]' in fixations_not_enr.columns:
-        plt.figure(figsize=(10, 6))
-        x, y = (fixations_not_enr['fixation x [px]'] / video_width, fixations_not_enr['fixation y [px]'] / video_height) if video_width and video_height else (fixations_not_enr['fixation x [px]'], fixations_not_enr['fixation y [px]'])
-        xlabel, ylabel = ('Normalized X', 'Normalized Y') if video_width and video_height else ('Pixel X', 'Pixel Y')
-        plt.plot(x, y, marker='o', linestyle='-', color='purple'); plt.title(f"Fixation Path (Un-enriched) - {subj_name} - {event_name}"); plt.xlabel(xlabel); plt.ylabel(ylabel); plt.grid(True); plt.savefig(output_dir / f'path_fixation_not_enriched_{subj_name}_{event_name}.pdf'); plt.close()
-
-    # --- Grafici di percorso (Gaze Path) ---
+    # Heatmap dello Sguardo (Arricchito, su superficie)
     if not un_enriched_mode and not gaze_enr.empty and 'gaze position on surface x [normalized]' in gaze_enr.columns:
-        gaze_on_surface = gaze_enr[gaze_enr['gaze detected on surface'] == True]
-        if not gaze_on_surface.empty:
-            plt.figure(figsize=(10, 6)); plt.plot(gaze_on_surface['gaze position on surface x [normalized]'], gaze_on_surface['gaze position on surface y [normalized]'], marker='.', linestyle='-', color='red', alpha=0.5); plt.title(f"Gaze Path (Enriched) - {subj_name} - {event_name}"); plt.xlabel('Normalized X'); plt.ylabel('Normalized Y'); plt.grid(True); plt.savefig(output_dir / f'path_gaze_enriched_{subj_name}_{event_name}.pdf'); plt.close()
-    
-    if not gaze_not_enr.empty and 'gaze position x [px]' in gaze_not_enr.columns:
-        plt.figure(figsize=(10, 6))
-        x, y = (gaze_not_enr['gaze position x [px]'] / video_width, gaze_not_enr['gaze position y [px]'] / video_height) if video_width and video_height else (gaze_not_enr['gaze position x [px]'], gaze_not_enr['gaze position y [px]'])
-        xlabel, ylabel = ('Normalized X', 'Normalized Y') if video_width and video_height else ('Pixel X', 'Pixel Y')
-        plt.plot(x, y, marker='.', linestyle='-', color='blue', alpha=0.5); plt.title(f"Gaze Path (Un-enriched) - {subj_name} - {event_name}"); plt.xlabel(xlabel); plt.ylabel(ylabel); plt.grid(True); plt.savefig(output_dir / f'path_gaze_not_enriched_{subj_name}_{event_name}.pdf'); plt.close()
+        gaze_on_surface = gaze_enr[gaze_enr['gaze detected on surface'] == True].copy()
+        plot_heatmap(gaze_on_surface['gaze position on surface x [normalized]'], gaze_on_surface['gaze position on surface y [normalized]'], 
+                     f"Gaze Density Heatmap (Enriched) - {subj_name} - {event_name}", 
+                     output_dir / f'heatmap_gaze_enriched_{subj_name}_{event_name}.pdf', xlim=(0, 1), ylim=(0, 1), 
+                     xlabel='Normalized X', ylabel='Normalized Y')
 
-    # --- Plot Saccadi e Blink ---
-    if not saccades_df.empty and 'mean velocity [px/s]' in saccades_df.columns:
-        plt.figure(figsize=(10, 6)); plt.plot(saccades_df.index, saccades_df['mean velocity [px/s]'], label='mean velocity'); plt.plot(saccades_df.index, saccades_df['peak velocity [px/s]'], label='peak velocity'); plt.title(f'Mean and Peak Saccade Velocity - {subj_name} - {event_name}'); plt.xlabel('Frames (n)'); plt.ylabel('px/s'); plt.legend(); plt.grid(True); plt.tight_layout(); plt.savefig(output_dir / f'saccade_velocities_{subj_name}_{event_name}.pdf'); plt.close()
-    if not saccades_df.empty and 'amplitude [px]' in saccades_df.columns:
-        plt.figure(figsize=(10, 6)); plt.plot(saccades_df.index, saccades_df['amplitude [px]'], label='amplitude', color='teal'); plt.title(f'Saccade Amplitude - {subj_name} - {event_name}'); plt.xlabel('Frames (n)'); plt.ylabel('px'); plt.legend(); plt.grid(True); plt.tight_layout(); plt.savefig(output_dir / f'saccade_amplitude_{subj_name}_{event_name}.pdf'); plt.close()
-    if not blinks_df.empty:
-        all_timestamps = pd.concat([df[get_timestamp_col(df)] for df in [pupil_df, blinks_df, saccades_df] if not df.empty and get_timestamp_col(df) is not None]).dropna()
-        if not all_timestamps.empty:
-            min_ts, max_ts = all_timestamps.min(), all_timestamps.max()
-            duration_s = (max_ts - min_ts) / NS_TO_S
-            num_points = int(duration_s * SAMPLING_FREQ)
-            if num_points > 0:
-                time_axis_s = np.linspace(0, duration_s, num_points)
-                blink_time_series = np.zeros(num_points)
-                for _, row in blinks_df.iterrows():
-                    start_idx = max(0, int(((row['start timestamp [ns]'] - min_ts) / NS_TO_S) * SAMPLING_FREQ))
-                    end_idx = min(num_points, int(((row['start timestamp [ns]'] + row['duration [ms]'] * 1e6 - min_ts) / NS_TO_S) * SAMPLING_FREQ))
-                    if start_idx < end_idx: blink_time_series[start_idx:end_idx] = 1
-                plt.figure(figsize=(12, 4)); plt.plot(time_axis_s, blink_time_series, drawstyle='steps-post'); plt.title(f'Blink Time Series - {subj_name} - {event_name}'); plt.xlabel('Time [s]'); plt.ylabel('Blink (0=No, 1=Yes)'); plt.yticks([0, 1]); plt.grid(axis='y'); plt.ylim(-0.1, 1.1); plt.tight_layout(); plt.savefig(output_dir / f'blink_time_series_{subj_name}_{event_name}.pdf'); plt.close()
-
-    # --- Heatmap con gestione errori ---
-    def plot_heatmap(x, y, title, output_path, xlim=None, ylim=None, xlabel='X', ylabel='Y'):
-        x = x.dropna(); y = y.dropna()
-        valid_points = pd.concat([x, y], axis=1).dropna()
-        if len(valid_points) < 3:
-            print(f"ATTENZIONE: Dati insufficienti (meno di 3 punti validi) per generare heatmap: {title}")
-            return
-        try:
-            k = gaussian_kde(valid_points.values.T)
-            xi, yi = np.mgrid[valid_points.iloc[:,0].min():valid_points.iloc[:,0].max():100j, valid_points.iloc[:,1].min():valid_points.iloc[:,1].max():100j]
-            zi = k(np.vstack([xi.flatten(), yi.flatten()]))
-            plt.figure(figsize=(10, 8)); plt.pcolormesh(xi, yi, zi.reshape(xi.shape), shading='auto', cmap='Reds'); plt.plot(valid_points.iloc[:,0], valid_points.iloc[:,1], 'k.', markersize=2, alpha=0.2); plt.title(title); plt.xlabel(xlabel); plt.ylabel(ylabel)
-            if xlim: plt.xlim(xlim)
-            if ylim: plt.ylim(ylim)
-            plt.grid(True, linestyle='--'); plt.tight_layout(); plt.savefig(output_path); plt.close()
-        except np.linalg.LinAlgError:
-            print(f"ATTENZIONE: Impossibile generare heatmap per '{title}' (matrice singolare).")
-        except Exception as e:
-            print(f"ATTENzione: Errore imprevisto durante la generazione di heatmap per '{title}': {e}")
-
-    # Heatmap Fissazioni Arricchite
-    if not un_enriched_mode and not fixations_enr.empty:
-        fixations_on_surface = fixations_enr[fixations_enr['fixation detected on surface'] == True]
-        plot_heatmap(fixations_on_surface['fixation x [normalized]'], fixations_on_surface['fixation y [normalized]'], f"Fixation Density Heatmap (Enriched) - {subj_name} - {event_name}", output_dir / f'heatmap_fixation_enriched_{subj_name}_{event_name}.pdf', xlim=(0, 1), ylim=(0, 1), xlabel='Normalized X', ylabel='Normalized Y')
-    # Heatmap Fissazioni Non Arricchite
-    if not fixations_not_enr.empty and 'fixation x [px]' in fixations_not_enr.columns:
-        x_coords, y_coords = (fixations_not_enr['fixation x [px]'] / video_width, fixations_not_enr['fixation y [px]'] / video_height) if video_width and video_height else (fixations_not_enr['fixation x [px]'], fixations_not_enr['fixation y [px]'])
-        xlim, ylim = ((0, 1), (0, 1)) if video_width and video_height else (None, None)
-        xlabel, ylabel = ('Normalized X', 'Normalized Y') if video_width and video_height else ('Pixel X', 'Pixel Y')
-        plot_heatmap(x_coords, y_coords, f"Fixation Density Heatmap (Un-enriched) - {subj_name} - {event_name}", output_dir / f'heatmap_fixation_not_enriched_{subj_name}_{event_name}.pdf', xlim=xlim, ylim=ylim, xlabel=xlabel, ylabel=ylabel)
-
-    # Heatmap Sguardo Arricchito
-    if not un_enriched_mode and not gaze_enr.empty:
-        gaze_on_surface = gaze_enr[gaze_enr['gaze detected on surface'] == True]
-        plot_heatmap(gaze_on_surface['gaze position on surface x [normalized]'], gaze_on_surface['gaze position on surface y [normalized]'], f"Gaze Density Heatmap (Enriched) - {subj_name} - {event_name}", output_dir / f'heatmap_gaze_enriched_{subj_name}_{event_name}.pdf', xlim=(0, 1), ylim=(0, 1), xlabel='Normalized X', ylabel='Normalized Y')
-
-    # Heatmap Sguardo Non Arricchito
-    # MODIFICA QUI: Aggiunto fallback a coordinate [norm]
+    # Heatmap dello Sguardo (Non Arricchito)
     if not gaze_not_enr.empty:
         x_col, y_col, coords_type = None, None, None
         if 'gaze position x [px]' in gaze_not_enr.columns and 'gaze position y [px]' in gaze_not_enr.columns:
@@ -779,15 +531,50 @@ def generate_plots_2(data, movements_df, subj_name, event_name, output_dir: Path
         if x_col:
             x_coords, y_coords = gaze_not_enr[x_col], gaze_not_enr[y_col]
             
-            if coords_type == 'pixel' and video_width and video_height:
+            if coords_type == 'pixel' and video_width and video_height and video_width > 0 and video_height > 0:
                 x_coords, y_coords = x_coords / video_width, y_coords / video_height
                 xlim, ylim, xlabel, ylabel = (0, 1), (0, 1), 'Normalized X', 'Normalized Y'
             elif coords_type == 'normalized':
                 xlim, ylim, xlabel, ylabel = (0, 1), (0, 1), 'Normalized X', 'Normalized Y'
             else:
-                xlim, ylim, xlabel, ylabel = None, None, 'Pixel X', 'Pixel Y'
+                xlim, ylim, xlabel, ylabel = (None, None), (None, None), 'Pixel X', 'Pixel Y' # Let plot_heatmap determine
+                print("ATTENZIONE: Le coordinate dello sguardo non arricchite sono in pixel e le dimensioni del video non sono disponibili per la normalizzazione per heatmap.")
                 
-            plot_heatmap(x_coords, y_coords, f"Gaze Density Heatmap (Un-enriched) - {subj_name} - {event_name}", output_dir / f'heatmap_gaze_not_enriched_{subj_name}_{event_name}.pdf', xlim=xlim, ylim=ylim, xlabel=xlabel, ylabel=ylabel)
+            plot_heatmap(x_coords, y_coords, f"Gaze Density Heatmap (Un-enriched) - {subj_name} - {event_name}", 
+                         output_dir / f'heatmap_gaze_not_enriched_{subj_name}_{event_name}.pdf', xlim=xlim, ylim=ylim, 
+                         xlabel=xlabel, ylabel=ylabel)
+        else:
+            print(f"ATTENZIONE: Colonne di sguardo non arricchite ('gaze position x [px]' o 'gaze x [norm]') non trovate per heatmap per l'evento '{event_name}'.")
+    else:
+        print(f"ATTENZIONE: Dati di sguardo non arricchiti insufficienti per heatmap per l'evento '{event_name}'. Nessun grafico generato.")
+
+def plot_heatmap(x, y, title, output_path, xlim=None, ylim=None, xlabel='X', ylabel='Y'):
+    """Funzione ausiliaria per creare una heatmap di densità con gestione errori."""
+    x = x.dropna(); y = y.dropna()
+    valid_points = pd.concat([x, y], axis=1).dropna()
+    if len(valid_points) < 3:
+        print(f"ATTENZIONE: Dati insufficienti (meno di 3 punti validi) per generare heatmap: '{title}'")
+        return
+    try:
+        k = gaussian_kde(valid_points.values.T)
+        # Ensure mgrid covers the data range or specified limits
+        if xlim and ylim:
+            xi, yi = np.mgrid[xlim[0]:xlim[1]:100j, ylim[0]:ylim[1]:100j]
+        else:
+            xi, yi = np.mgrid[valid_points.iloc[:,0].min():valid_points.iloc[:,0].max():100j,
+                              valid_points.iloc[:,1].min():valid_points.iloc[:,1].max():100j]
+
+        zi = k(np.vstack([xi.flatten(), yi.flatten()]))
+        plt.figure(figsize=(10, 8)); plt.pcolormesh(xi, yi, zi.reshape(xi.shape), shading='auto', cmap='Reds'); plt.plot(valid_points.iloc[:,0], valid_points.iloc[:,1], 'k.', markersize=2, alpha=0.2); plt.title(title); plt.xlabel(xlabel); plt.ylabel(ylabel)
+        if xlim: plt.xlim(xlim)
+        if ylim: plt.ylim(ylim)
+        plt.grid(True, linestyle='--'); plt.tight_layout(); plt.savefig(output_path); plt.close()
+    except np.linalg.LinAlgError:
+        print(f"ATTENZIONE: Impossibile generare heatmap per '{title}' (matrice singolare, dati non sufficientemente variati).")
+    except Exception as e:
+        print(f"ATTENZIONE: Errore imprevisto durante la generazione di heatmap per '{title}': {e}")
+
+
 def process_segment(event_row, start_ts, end_ts, all_data, subj_name, output_dir, un_enriched_mode, video_width, video_height):
     """Pipeline di elaborazione principale per un singolo segmento di evento."""
     event_name = event_row.get('name', f"segment_{event_row.name}")
@@ -802,7 +589,6 @@ def process_segment(event_row, start_ts, end_ts, all_data, subj_name, output_dir
     movements_df = process_gaze_movements(segment_data.get('gaze', pd.DataFrame()), un_enriched_mode)
     results = calculate_summary_features(segment_data, movements_df, subj_name, event_name, un_enriched_mode, video_width, video_height)
     generate_plots(segment_data, movements_df, subj_name, event_name, output_dir, un_enriched_mode, video_width, video_height)
-    generate_plots_2(segment_data, movements_df, subj_name, event_name, output_dir, un_enriched_mode, video_width, video_height)
 
     return results
 
