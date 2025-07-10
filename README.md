@@ -64,37 +64,37 @@ To run the SPEED analysis tool, you'll need Python 3 and several scientific comp
 
 ## How to Use the Application 🚀
 
-1.  **Launch the GUI**: Run the `SPEED_gui_yolo.py` script from your terminal.
+1.  **Launch the GUI**: Run the `GUI.py` script from your terminal.
     ```bash
-    python SPEED_gui_yolo.py
+    python GUI.py
     ```
 
 2.  **Fill in the Information**:
     * **Participant Name**: Enter a unique identifier for the participant.
-    * **Output Folder**: The application will automatically suggest an output path. You can also use the "Browse..." button to select a different location.
-    * **Analysis Options**:
-        * `Analyze un-enriched data only`: Check this if you only want to process data using pixel coordinates from the raw eye-tracking files.
+    * **Output Folder**: The application will automatically suggest an output path based on the participant's name. You can also use the "Browse..." button to select a different location.
+    * **Analysis Options**: Select the desired analyses. Note that some options depend on others.
         * `Run Standard Event-Based Analysis`: Enables the baseline analysis of fixations, saccades, and pupil metrics segmented by events.
-        * `└─ Generate Standard Summary Video`: Creates the summary video for the standard analysis.
-        * `Run YOLO Object Detection Analysis`: Master switch to enable YOLO features (requires a GPU).
-        * `└─ Run YOLO on Marker-Mapped Surface only`: **This is the new feature.** When checked, it runs a slower but highly-focused analysis on the perspective-corrected surface defined by `surface_positions.csv`.
-        * `   └─ Generate Warped Surface Video`: Creates a video of the cropped and flattened surface with object detections and gaze points drawn on it.
+        * `└─ Generate Standard Summary Video`: Creates the summary video for the standard analysis. This requires the standard analysis to be active.
+        * `Run YOLO Object Detection Analysis`: Master switch to enable YOLO features (a GPU is highly recommended).
+        * `└─ Run YOLO on Marker-Mapped Surface only`: **This is the new feature.** When checked, it runs a slower but highly-focused analysis on the perspective-corrected surface defined by `surface_positions.csv`. This requires the main YOLO option to be active.
+        * `   └─ Generate Warped Surface Video`: Creates a video of the cropped and flattened surface with object detections and gaze points drawn on it. This requires the surface-only YOLO analysis.
 
 3.  **Select Input Files**:
     * Click the "Browse..." button next to each file type to select the corresponding data file.
+    * The labels of the required files will turn **red** based on the selected analysis options.
 
 4.  **Start the Analysis**:
     * Once all required fields are filled and files are selected, click the **"Start Analysis"** button.
-    * The status label will show the progress.
+    * The status label at the bottom will show the progress.
     * Upon completion, a confirmation message will appear.
 
     ![Screenshot of the SPEED GUI with the new YOLO option](gui_speed_yolo.png)
 
 ## Input Files 📂
 
-The application requires several specific CSV and MP4 files. The `REQUIRED_FILES` are listed below.
+The application requires several specific CSV and MP4 files. The files required for the analysis change dynamically based on the selected options in the GUI.
 
-| Standard Name | Display Label (in GUI) | Description | Required |
+| Standard Name | Display Label (in GUI) | Description | Requirement |
 | --- | --- | --- | --- |
 | `events.csv` | `events.csv` | Contains timestamps that define the start and end of experimental segments. | **Always** |
 | `gaze_enriched.csv` | `gaze CSV file (enriched)` | Gaze data with coordinates normalized to a detected surface. | **Required for Surface YOLO Analysis** |
@@ -107,7 +107,7 @@ The application requires several specific CSV and MP4 files. The `REQUIRED_FILES
 | `internal.mp4` | `internal camera video` | The video recording of the participant's eye. | **Always** |
 | `external.mp4` | `external camera video` | The video recording of the participant's scene/view. | **Always** |
 | `world_timestamps.csv` | `world_timestamps.csv` | Timestamps for each frame of the external video. | **Required for all YOLO Analyses** |
-| `surface_positions.csv` | `surface_positions.csv`| Corner coordinates of the marker-defined surface per frame. | **Required for Surface YOLO Analysis** |
+| `surface_positions.csv` | `Marker Mapper surface positions CSV`| Corner coordinates of the marker-defined surface per frame. | **Required for Surface YOLO Analysis** |
 
 ### Output Files 📈
 

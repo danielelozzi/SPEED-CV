@@ -114,7 +114,7 @@ class SpeedApp:
         link_frame.pack(side=tk.BOTTOM, pady=10)
         lab_link = tk.Label(link_frame, text="Cognitive and Behavioral Science Lab", fg="blue", cursor="hand2"); lab_link.pack(side=tk.LEFT, padx=10)
         lab_link.bind("<Button-1>", lambda e: self.open_link("https://labscoc.wordpress.com/"))
-        github_link = tk.Label(link_frame, text="GitHub", fg="blue", cursor="hand2")
+        github_link = tk.Label(link_frame, text="Daniele Lozzi's Github Page", fg="blue", cursor="hand2")
         github_link.pack(side=tk.LEFT, padx=10)
         github_link.bind("<Button-1>", lambda e: self.open_link("https://github.com/danielelozzi/"))
 
