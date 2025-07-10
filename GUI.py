@@ -1,14 +1,22 @@
+# GUI.py
+
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import os
 import shutil
 import webbrowser
 from pathlib import Path
+import traceback
 
-# Import the main analysis function from the NEW, integrated script
-from SPEED import run_analysis
+# Importa la funzione orchestratrice principale dal nuovo script
+try:
+    import main_analyzer
+except ImportError:
+    messagebox.showerror("Errore Critico", "File 'main_analyzer.py' non trovato. Assicurati che sia nella stessa cartella di GUI.py.")
+    exit()
 
-# --- Configuration ---
+
+# --- Configurazione ---
 REQUIRED_FILES = {
     "events.csv": "events.csv",
     "gaze_enriched.csv": "gaze_enriched.csv",
@@ -20,8 +28,8 @@ REQUIRED_FILES = {
     "saccades.csv": "saccades.csv",
     "internal.mp4": "internal camera video",
     "external.mp4": "external camera video",
-    # The new script needs world_timestamps.csv for YOLO alignment
     "world_timestamps.csv": "world_timestamps.csv",
+    "surface_positions.csv": "surface_positions.csv",
 }
 FILE_DESCRIPTIONS = {
     "events.csv": "Select the events CSV file",
@@ -35,13 +43,14 @@ FILE_DESCRIPTIONS = {
     "internal.mp4": "Select the internal video (eye)",
     "external.mp4": "Select the external video (scene)",
     "world_timestamps.csv": "Select the world timestamps CSV",
+    "surface_positions.csv": "Select the Marker Mapper surface positions CSV",
 }
 OPTIONAL_FOR_UNENRICHED = ["gaze_enriched.csv", "fixations_enriched.csv"]
 
 class SpeedApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SPEED v2.0 (YOLO Integrated) - Cognitive and Behavioral Science Lab")
+        self.root.title("SPEED v3.0 (Modular Analyzer) - Cognitive and Behavioral Science Lab")
         self.file_entries = {}
         
         main_frame = tk.Frame(root, padx=10, pady=10)
@@ -60,43 +69,55 @@ class SpeedApp:
         output_button = tk.Button(output_frame, text="Browse...", command=self.select_output_dir); output_button.pack(side=tk.RIGHT)
 
         # Analysis Options
-        options_frame = tk.Frame(main_frame); options_frame.pack(fill=tk.X, pady=(5,0))
-        self.unenriched_var = tk.BooleanVar()
-        self.unenriched_checkbox = tk.Checkbutton(options_frame, text="Analyze un-enriched data only", variable=self.unenriched_var, command=self.toggle_file_requirements)
-        self.unenriched_checkbox.pack(anchor='w')
+        options_frame = tk.LabelFrame(main_frame, text="Analysis Options", padx=5, pady=5); options_frame.pack(fill=tk.X, pady=(5,0))
         
-        self.generate_video_var = tk.BooleanVar(value=True)
-        self.video_checkbox = tk.Checkbutton(options_frame, text="Generate Analysis Video (slow process)", variable=self.generate_video_var)
-        self.video_checkbox.pack(anchor='w')
+        self.run_standard_var = tk.BooleanVar(value=True)
+        self.standard_checkbox = tk.Checkbutton(options_frame, text="Run Standard Event-Based Analysis", variable=self.run_standard_var)
+        self.standard_checkbox.pack(anchor='w')
         
-        # --- NEW: YOLO Analysis Checkbox ---
+        self.generate_standard_video_var = tk.BooleanVar(value=False)
+        self.standard_video_checkbox = tk.Checkbutton(options_frame, text="└─ Generate Standard Summary Video", variable=self.generate_standard_video_var)
+        self.standard_video_checkbox.pack(anchor='w', padx=(20, 0))
+
         self.yolo_analysis_var = tk.BooleanVar(value=False)
         self.yolo_checkbox = tk.Checkbutton(options_frame, text="Run YOLO Object Detection Analysis (requires GPU)", variable=self.yolo_analysis_var, command=self.toggle_yolo_requirements)
         self.yolo_checkbox.pack(anchor='w')
+        
+        self.surface_yolo_var = tk.BooleanVar(value=False)
+        self.surface_yolo_checkbox = tk.Checkbutton(options_frame, text="└─ Run YOLO on Marker-Mapped Surface only (slow)", variable=self.surface_yolo_var, command=self.toggle_yolo_requirements)
+        self.surface_yolo_checkbox.pack(anchor='w', padx=(20, 0))
+
+        self.generate_surface_video_var = tk.BooleanVar(value=True)
+        self.surface_video_checkbox = tk.Checkbutton(options_frame, text="   └─ Generate Warped Surface Video", variable=self.generate_surface_video_var)
+        self.surface_video_checkbox.pack(anchor='w', padx=(40, 0))
+
 
         # File Selection
         files_frame = tk.LabelFrame(main_frame, text="Select Data Files", padx=5, pady=5)
         files_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         for std_name, display_label in REQUIRED_FILES.items():
             row_frame = tk.Frame(files_frame); row_frame.pack(fill=tk.X, pady=2)
-            label = tk.Label(row_frame, text=f"{display_label}:", width=25, anchor='w'); label.pack(side=tk.LEFT)
+            label = tk.Label(row_frame, text=f"{display_label}:", width=35, anchor='w'); label.pack(side=tk.LEFT)
             entry = tk.Entry(row_frame); entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
             self.file_entries[std_name] = entry
             description = FILE_DESCRIPTIONS[std_name]
             button = tk.Button(row_frame, text="Browse...", command=lambda e=entry, d=description: self.select_file(e, d)); button.pack(side=tk.RIGHT)
         
-        self.toggle_file_requirements()
         self.toggle_yolo_requirements()
 
         # Run Button & Status
         run_button = tk.Button(main_frame, text="Start Analysis", command=self.run_analysis_process, font=('Helvetica', 10, 'bold')); run_button.pack(pady=10)
         self.status_label = tk.Label(main_frame, text="Ready", fg="blue"); self.status_label.pack(pady=5)
-        lab_link = tk.Label(main_frame, text="https://labscoc.wordpress.com/", fg="blue", cursor="hand2"); lab_link.pack(side=tk.BOTTOM, pady=(5, 10))
+        
+        # Links
+        link_frame = tk.Frame(main_frame)
+        link_frame.pack(side=tk.BOTTOM, pady=10)
+        lab_link = tk.Label(link_frame, text="Cognitive and Behavioral Science Lab", fg="blue", cursor="hand2"); lab_link.pack(side=tk.LEFT, padx=10)
         lab_link.bind("<Button-1>", lambda e: self.open_link("https://labscoc.wordpress.com/"))
-
-        github_link = tk.Label(main_frame, text="https://github.com/danielelozzi/", fg="blue", cursor="hand2")
-        github_link.pack(side=tk.BOTTOM, pady=(0, 10))
+        github_link = tk.Label(link_frame, text="GitHub", fg="blue", cursor="hand2")
+        github_link.pack(side=tk.LEFT, padx=10)
         github_link.bind("<Button-1>", lambda e: self.open_link("https://github.com/danielelozzi/"))
+
 
     def update_output_dir_default(self, *args):
         subj_name = self.participant_name_var.get().strip()
@@ -112,23 +133,24 @@ class SpeedApp:
             self.output_dir_entry.delete(0, tk.END)
             self.output_dir_entry.insert(0, directory_path)
 
-    def toggle_file_requirements(self):
-        is_unenriched = self.unenriched_var.get()
-        for std_name in OPTIONAL_FOR_UNENRICHED:
-            entry_widget = self.file_entries[std_name]
-            label_widget = entry_widget.master.winfo_children()[0]
-            state = tk.DISABLED if is_unenriched else tk.NORMAL
-            entry_widget.config(state=state); label_widget.config(state=state)
-            if is_unenriched: entry_widget.delete(0, tk.END)
-
     def toggle_yolo_requirements(self):
-        is_yolo = self.yolo_analysis_var.get()
-        yolo_required_file = "world_timestamps.csv"
-        entry_widget = self.file_entries[yolo_required_file]
-        label_widget = entry_widget.master.winfo_children()[0]
-        # Always visible, but we can change color to indicate requirement
-        label_widget.config(fg="red" if is_yolo else "black")
+        run_yolo = self.yolo_analysis_var.get()
+        run_surface_yolo = self.surface_yolo_var.get()
 
+        # Abilita/disabilita i checkbox dipendenti
+        self.surface_yolo_checkbox.config(state=tk.NORMAL if run_yolo else tk.DISABLED)
+        self.surface_video_checkbox.config(state=tk.NORMAL if run_yolo and run_surface_yolo else tk.DISABLED)
+        
+        if not run_yolo:
+            self.surface_yolo_var.set(False)
+            run_surface_yolo = False
+        if not run_surface_yolo:
+            self.generate_surface_video_var.set(False)
+
+        # Evidenzia i file richiesti
+        self.file_entries["world_timestamps.csv"].master.winfo_children()[0].config(fg="red" if run_yolo else "black")
+        self.file_entries["surface_positions.csv"].master.winfo_children()[0].config(fg="red" if run_surface_yolo else "black")
+        self.file_entries["gaze_enriched.csv"].master.winfo_children()[0].config(fg="red" if run_surface_yolo else "black")
 
     def select_file(self, entry_widget, description):
         file_path = filedialog.askopenfilename(title=description)
@@ -143,22 +165,30 @@ class SpeedApp:
         if not subj_name or not output_dir_path:
             messagebox.showerror("Error", "Please enter a participant name and select an output folder."); return
 
-        is_unenriched = self.unenriched_var.get()
-        generate_video = self.generate_video_var.get()
-        run_yolo = self.yolo_analysis_var.get()
+        # Raccogli tutte le opzioni dalla GUI
+        options = {
+            "run_standard": self.run_standard_var.get(),
+            "generate_standard_video": self.generate_standard_video_var.get(),
+            "run_yolo": self.yolo_analysis_var.get(),
+            "run_surface_yolo": self.surface_yolo_var.get(),
+            "generate_surface_video": self.generate_surface_video_var.get()
+        }
         
         selected_files = {std_name: entry.get().strip() for std_name, entry in self.file_entries.items()}
 
+        # Controllo file mancanti
         missing_files = []
+        required_by_logic = {
+            "world_timestamps.csv": options["run_yolo"],
+            "surface_positions.csv": options["run_surface_yolo"],
+            "gaze_enriched.csv": options["run_surface_yolo"]
+        }
         for name, path in selected_files.items():
-            is_optional_unenriched = is_unenriched and name in OPTIONAL_FOR_UNENRICHED
-            is_optional_yolo = not run_yolo and name == "world_timestamps.csv"
-
-            if not path and not is_optional_unenriched and not is_optional_yolo:
-                missing_files.append(REQUIRED_FILES[name])
-
+            if required_by_logic.get(name, False) and not path:
+                 missing_files.append(REQUIRED_FILES[name])
+        
         if missing_files:
-            messagebox.showerror("Error", f"Please select all required files. Missing: {', '.join(missing_files)}"); return
+            messagebox.showerror("Error", f"Please select all required files for the selected options. Missing: {', '.join(missing_files)}"); return
 
         try:
             self.status_label.config(text=f"Preparing folders for {subj_name}...", fg="blue"); self.root.update_idletasks()
@@ -172,14 +202,12 @@ class SpeedApp:
 
             self.status_label.config(text="Starting analysis... This might take some time.", fg="blue"); self.root.update_idletasks()
             
-            # Call the unified analysis function with the new parameter
-            run_analysis(
+            # Chiama la funzione orchestratrice con tutte le opzioni
+            main_analyzer.run_full_analysis(
                 subj_name=subj_name, 
                 data_dir_str=str(data_dir), 
                 output_dir_str=str(base_output_dir), 
-                un_enriched_mode=is_unenriched, 
-                generate_video=generate_video,
-                run_yolo_analysis=run_yolo
+                options=options
             )
             
             self.status_label.config(text="Analysis complete!", fg="green")
@@ -187,7 +215,7 @@ class SpeedApp:
         except Exception as e:
             self.status_label.config(text=f"An error occurred: {e}", fg="red")
             messagebox.showerror("Error", f"An error occurred during the process:\n{e}")
-            import traceback; traceback.print_exc()
+            traceback.print_exc()
 
 if __name__ == '__main__':
     root = tk.Tk()

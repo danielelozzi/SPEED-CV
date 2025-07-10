@@ -27,6 +27,7 @@ Before using this software, you need to acquire and prepare the data following a
 * **Blink Time Series**: Provides a binary time series plot indicating the presence or absence of blinks.
 * **Density Heatmap Generation**: Creates heatmaps that visualize the areas of highest concentration for fixations and gaze points using a kernel density estimate (KDE).
 * **YOLOv8 Object Detection Integration**: Optionally detects and tracks objects in the scene video, correlating gaze data to specific objects. This allows for statistics like normalized fixation counts and average pupil diameter per object class or instance.
+* **Focused Surface Analysis**: A dedicated mode to run YOLO analysis exclusively on a marker-defined surface. The tool automatically crops and applies perspective correction to each video frame before analysis, isolating the area of interest (e.g., a computer screen) for highly accurate object and gaze tracking within that specific zone.
 
 ## Environment Setup ⚙️
 
@@ -59,6 +60,8 @@ To run the SPEED analysis tool, you'll need Python 3 and several scientific comp
     * **Note on `Tkinter`**: This is part of the Python standard library and does not require a separate installation.
     * **Note on `torch`**: Installing PyTorch can be complex, especially if you want to use a GPU (highly recommended for YOLO). Please refer to the official [PyTorch installation guide](https://pytorch.org/get-started/locally/) for instructions tailored to your system (Linux/Mac/Windows, CUDA version, etc.).
 
+    * **Note on YOLO: for using YOLO is mandatory to download the pre-trained neural network at the following link on huggingface website: [https://huggingface.co/Ultralytics/YOLOv8/blob/main/yolov8n.pt](https://huggingface.co/Ultralytics/YOLOv8/blob/main/yolov8n.pt)
+
 ## How to Use the Application 🚀
 
 1.  **Launch the GUI**: Run the `SPEED_gui_yolo.py` script from your terminal.
@@ -71,8 +74,11 @@ To run the SPEED analysis tool, you'll need Python 3 and several scientific comp
     * **Output Folder**: The application will automatically suggest an output path. You can also use the "Browse..." button to select a different location.
     * **Analysis Options**:
         * `Analyze un-enriched data only`: Check this if you only want to process data using pixel coordinates from the raw eye-tracking files.
-        * `Generate Analysis Video`: If checked, the tool will create a summary video overlaying the analysis.
-        * `Run YOLO Object Detection Analysis`: Check this to enable the analysis of gaze data in relation to objects detected in the video. **This requires a GPU for efficient processing and the `world_timestamps.csv` file.**
+        * `Run Standard Event-Based Analysis`: Enables the baseline analysis of fixations, saccades, and pupil metrics segmented by events.
+        * `└─ Generate Standard Summary Video`: Creates the summary video for the standard analysis.
+        * `Run YOLO Object Detection Analysis`: Master switch to enable YOLO features (requires a GPU).
+        * `└─ Run YOLO on Marker-Mapped Surface only`: **This is the new feature.** When checked, it runs a slower but highly-focused analysis on the perspective-corrected surface defined by `surface_positions.csv`.
+        * `   └─ Generate Warped Surface Video`: Creates a video of the cropped and flattened surface with object detections and gaze points drawn on it.
 
 3.  **Select Input Files**:
     * Click the "Browse..." button next to each file type to select the corresponding data file.
@@ -91,7 +97,7 @@ The application requires several specific CSV and MP4 files. The `REQUIRED_FILES
 | Standard Name | Display Label (in GUI) | Description | Required |
 | --- | --- | --- | --- |
 | `events.csv` | `events.csv` | Contains timestamps that define the start and end of experimental segments. | **Always** |
-| `gaze_enriched.csv` | `gaze CSV file (enriched)` | Gaze data with coordinates normalized to a detected surface. | Optional |
+| `gaze_enriched.csv` | `gaze CSV file (enriched)` | Gaze data with coordinates normalized to a detected surface. | **Required for Surface YOLO Analysis** |
 | `fixations_enriched.csv` | `enriched fixations CSV file` | Fixation data with coordinates normalized to a detected surface. | Optional |
 | `gaze.csv` | `un-enriched gaze CSV file` | Raw gaze data with coordinates in pixels (`px`). | **Always** |
 | `fixations.csv` | `un-enriched fixations CSV file` | Raw fixation data with coordinates in pixels (`px`). | **Always** |
@@ -100,7 +106,8 @@ The application requires several specific CSV and MP4 files. The `REQUIRED_FILES
 | `saccades.csv` | `saccades CSV file` | Data on saccadic movements. | **Always** |
 | `internal.mp4` | `internal camera video` | The video recording of the participant's eye. | **Always** |
 | `external.mp4` | `external camera video` | The video recording of the participant's scene/view. | **Always** |
-| `world_timestamps.csv` | `world_timestamps.csv` | Timestamps for each frame of the external video. | **Required only for YOLO Analysis** |
+| `world_timestamps.csv` | `world_timestamps.csv` | Timestamps for each frame of the external video. | **Required for all YOLO Analyses** |
+| `surface_positions.csv` | `surface_positions.csv`| Corner coordinates of the marker-defined surface per frame. | **Required for Surface YOLO Analysis** |
 
 ### Output Files 📈
 
@@ -117,6 +124,10 @@ The analysis generates a main folder named `analysis_results_{participant_name}`
     * **`statistiche_per_classe.csv`**: Summarizes statistics aggregated by object class (e.g., 'person', 'car'). Includes metrics like normalized fixation count (fixations on an object / total times the object was detected) and the mean pupil diameter during those fixations for each event.
     * **`statistiche_per_istanza.csv`**: Provides the same statistics but for each unique instance of an object (e.g., 'person_1', 'person_2').
     * **`mappa_id_classe.csv`**: A helper file that maps the unique instance IDs to their general object class.
+
+    *These files are generated only when the "Run YOLO on Marker-Mapped Surface" option is enabled.*
+    * **`surface_analysis_video_{subj_name}.mp4`**: A video showing the **cropped and perspective-corrected surface**. It displays the detected object bounding boxes and the user's gaze point overlaid on the flattened surface view. This is extremely useful for verifying the analysis visually.
+    * **`surface_analysis_data_{subj_name}.csv`**: A detailed frame-by-frame CSV of the surface analysis. It includes the detected objects, their bounding boxes (normalized to the surface dimensions), and whether the user's gaze was within each box for every processed frame.
 
 4.  **Analysis Plots (`.pdf`)**
     *These plots visualize different aspects of the eye-tracking data for each event segment.*

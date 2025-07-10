@@ -7,230 +7,11 @@ import traceback
 import os
 from scipy.signal import welch, spectrogram
 from scipy.stats import gaussian_kde
-import pickle
-from collections import defaultdict
-from tqdm import tqdm
-import gc
-
-# Attempt to import PyTorch and YOLO, but don't fail if they aren't installed
-try:
-    import torch
-    from ultralytics import YOLO
-    YOLO_AVAILABLE = True
-except ImportError:
-    YOLO_AVAILABLE = False
-    print("Warning: 'torch' or 'ultralytics' not found. YOLO analysis will be unavailable.")
-
 
 # --- Costants ---
 SAMPLING_FREQ = 200  # Hz
 NS_TO_S = 1e9
 
-# ==============================================================================
-# HELPER FUNCTIONS (FROM process_gaze_data_v2.py and speed_script_events.py)
-# ==============================================================================
-
-def setup_directories(dirs):
-    for d in dirs:
-        if not os.path.exists(d):
-            os.makedirs(d)
-            print(f"Folder '{d}' created.")
-
-def read_pickle(file_path):
-    try:
-        with open(file_path, 'rb') as f:
-            return pickle.load(f)
-    except (FileNotFoundError, pickle.UnpicklingError, EOFError):
-        return None
-
-def save_pickle(obj, file_path):
-    try:
-        with open(file_path, 'wb') as f:
-            pickle.dump(obj, f)
-    except Exception as e:
-        print(f"Error saving object to {file_path}: {e}")
-
-def align_yolo_data(gaze_path, world_path, pupil_path, events_path):
-    print("Aligning data for YOLO analysis...")
-    try:
-        external = pd.read_csv(world_path)
-        external.rename(columns={'timestamp [ns]': 'timestamp [ns] external'}, inplace=True)
-        external['index_external'] = range(1, len(external) + 1)
-
-        gaze = pd.read_csv(gaze_path)
-        gaze.rename(columns={'timestamp [ns]': 'timestamp [ns] gaze'}, inplace=True)
-        
-        pupil = pd.read_csv(pupil_path)
-        pupil.rename(columns={'timestamp [ns]': 'timestamp [ns] pupil'}, inplace=True)
-        
-        events = pd.read_csv(events_path)
-        events.rename(columns={'timestamp [ns]': 'timestamp [ns] events'}, inplace=True)
-
-        df_merged = pd.merge_asof(gaze, external, left_on='timestamp [ns] gaze', right_on='timestamp [ns] external', direction='nearest')
-        df_merged = pd.merge_asof(df_merged, pupil, left_on='timestamp [ns] gaze', right_on='timestamp [ns] pupil', direction='nearest')
-        
-        agg_functions = {
-            'gaze x [px]': 'mean', 'gaze y [px]': 'mean', 'pupil diameter left [mm]': 'mean',
-            'pupil diameter right [mm]': 'mean', 'timestamp [ns] gaze': 'mean',
-            'recording id': 'first', 'timestamp [ns] external': 'first'
-        }
-        mean_timestamps = df_merged.groupby('index_external').agg(agg_functions).reset_index()
-        mean_timestamps = mean_timestamps.sort_values('timestamp [ns] external')
-        events = events.sort_values('timestamp [ns] events')
-        final_df = pd.merge_asof(mean_timestamps, events, left_on='timestamp [ns] external', right_on='timestamp [ns] events', direction='backward')
-
-        final_df['gaze x [px]'] = final_df['gaze x [px]'] / 1600.0
-        final_df['gaze y [px]'] = final_df['gaze y [px]'] / 1200.0
-
-        print("Data alignment complete.")
-        return final_df.dropna(subset=['name'])
-    except FileNotFoundError as e:
-        print(f"Error during data alignment: Missing file - {e}. Skipping YOLO analysis.")
-        return None
-
-# ==============================================================================
-# YOLO ANALYSIS CLASS (FROM process_gaze_data_v2.py)
-# ==============================================================================
-
-class GazeAnalyzer:
-    def __init__(self, video_path, aligned_data_df, data_dir='data'):
-        self.video_path = video_path
-        self.aligned_data = aligned_data_df
-        self.data_dir = data_dir
-        
-        if not YOLO_AVAILABLE:
-            raise ImportError("YOLO libraries are not installed. Cannot perform Gaze Analysis.")
-
-        if torch.cuda.is_available():
-            self.device = 'cuda'
-        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            self.device = 'mps'
-        else:
-            self.device = 'cpu'
-        print(f"Using device for YOLO: {self.device}")
-
-        self.model = YOLO("yolov8n.pt")
-        self.model.to(self.device)
-        self.model_classes = self.model.names
-
-    def run_yolo_tracking(self):
-        print(f"Starting YOLO tracking on '{self.video_path}'...")
-        # Check if tracking data already exists to avoid re-running
-        if len(os.listdir(self.data_dir)) >= len(self.aligned_data['index_external'].unique()):
-            print("YOLO tracking data appears to exist. Skipping this phase.")
-            return
-
-        stream = self.model.track(self.video_path, stream=True, verbose=False, device=self.device)
-        
-        for n_frame, track_frame in tqdm(enumerate(stream), desc="YOLO Tracking Video"):
-            try:
-                track_frame.orig_img = None  # Free up memory
-                file_name = os.path.join(self.data_dir, f"{n_frame}.pickle")
-                save_pickle(track_frame, file_name)
-            except Exception as e:
-                print(f'Error at frame {n_frame}: {e}')
-        gc.collect()
-
-    def analyze_fixations_and_stats(self):
-        print("Analyzing fixations and calculating YOLO statistics...")
-        stats_per_class = defaultdict(lambda: defaultdict(lambda: {'detection_count': 0, 'fixation_count': 0, 'pupil_diameters': []}))
-        stats_per_instance = defaultdict(lambda: defaultdict(lambda: {'detection_count': 0, 'fixation_count': 0, 'pupil_diameters': []}))
-        instance_to_class_map = {}
-
-        for _, row in tqdm(self.aligned_data.iterrows(), total=self.aligned_data.shape[0], desc="Analyzing Frames for YOLO"):
-            event_name = row['name']
-            frame_idx = row['index_external'] - 1
-            
-            pickle_path = os.path.join(self.data_dir, f"{frame_idx}.pickle")
-            yolo_data = read_pickle(pickle_path)
-            
-            if yolo_data is None or yolo_data.boxes is None or yolo_data.boxes.id is None:
-                continue
-
-            detected_ids_in_frame = set()
-            for i in range(len(yolo_data.boxes.id)):
-                class_idx = int(yolo_data.boxes.cls[i])
-                class_name = self.model_classes[class_idx]
-                object_id = int(yolo_data.boxes.id[i])
-                instance_id = f"{class_name}_{object_id}"
-
-                if instance_id not in instance_to_class_map:
-                    instance_to_class_map[instance_id] = class_name
-
-                stats_per_class[event_name][class_name]['detection_count'] += 1
-                if instance_id not in detected_ids_in_frame:
-                     stats_per_instance[event_name][instance_id]['detection_count'] += 1
-                     detected_ids_in_frame.add(instance_id)
-
-            gaze_x = row['gaze x [px]']
-            gaze_y = row['gaze y [px]']
-            pupil_diameter = row['pupil diameter left [mm]']
-
-            if pd.isna(gaze_x) or pd.isna(pupil_diameter):
-                continue
-
-            for i in range(len(yolo_data.boxes.xyxyn)):
-                xmin, ymin, xmax, ymax = yolo_data.boxes.xyxyn[i]
-                if xmin <= gaze_x <= xmax and ymin <= gaze_y <= ymax:
-                    class_idx = int(yolo_data.boxes.cls[i])
-                    class_name = self.model_classes[class_idx]
-                    object_id = int(yolo_data.boxes.id[i])
-                    instance_id = f"{class_name}_{object_id}"
-                    
-                    stats_per_class[event_name][class_name]['fixation_count'] += 1
-                    stats_per_class[event_name][class_name]['pupil_diameters'].append(pupil_diameter)
-                    stats_per_instance[event_name][instance_id]['fixation_count'] += 1
-                    stats_per_instance[event_name][instance_id]['pupil_diameters'].append(pupil_diameter)
-                    break 
-
-        print("YOLO analysis complete. Generating result tables...")
-        return stats_per_class, stats_per_instance, instance_to_class_map
-
-    def create_results_tables(self, stats_per_class, stats_per_instance, instance_to_class_map):
-        event_names = sorted(stats_per_class.keys())
-        all_classes = sorted(set(cls for events in stats_per_class.values() for cls in events.keys()))
-        class_data = []
-        for event in event_names:
-            row = {'evento': event}
-            for cls in all_classes:
-                stats = stats_per_class[event][cls]
-                fixations = stats['fixation_count']
-                detections = stats['detection_count']
-                pupil_diams = stats['pupil_diameters']
-                row[f'{cls}_fissazioni_normalizzate'] = fixations / detections if detections > 0 else 0
-                row[f'{cls}_diametro_pupilla_medio'] = np.mean(pupil_diams) if pupil_diams else np.nan
-            class_data.append(row)
-        df_class = pd.DataFrame(class_data)
-
-        all_instances = sorted(set(inst for events in stats_per_instance.values() for inst in events.keys()))
-        instance_data = []
-        for event in event_names:
-            row = {'evento': event}
-            for inst_id in all_instances:
-                stats = stats_per_instance[event][inst_id]
-                fixations = stats['fixation_count']
-                detections = stats['detection_count']
-                pupil_diams = stats['pupil_diameters']
-                row[f'{inst_id}_fissazioni_normalizzate'] = fixations / detections if detections > 0 else 0
-                row[f'{inst_id}_diametro_pupilla_medio'] = np.mean(pupil_diams) if pupil_diams else np.nan
-            instance_data.append(row)
-        df_instance = pd.DataFrame(instance_data)
-
-        id_map_data = list(instance_to_class_map.items())
-        df_id_map = pd.DataFrame(id_map_data, columns=['instance_id', 'classe_oggetto'])
-        df_id_map = df_id_map.sort_values(by=['classe_oggetto', 'instance_id']).reset_index(drop=True)
-
-        return df_class, df_instance, df_id_map
-
-# ==============================================================================
-# ORIGINAL SPEED SCRIPT FUNCTIONS (with minor adaptations)
-# ==============================================================================
-
-# ... (All the functions from speed_script_events.py like euclidean_distance, load_all_data,
-#      filter_data_by_segment, process_gaze_movements, calculate_summary_features,
-#      _plot_histogram, generate_plots, generate_plots_2, process_segment,
-#      get_video_dimensions, create_analysis_video, etc., would be here.
-#      They are omitted for brevity but should be copied into this script.)
 def euclidean_distance(x1, y1, x2, y2):
     """Calcola la distanza euclidea tra due punti."""
     return np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
@@ -1190,91 +971,40 @@ def create_analysis_video(data_dir: Path, output_dir: Path):
         print(f"Si è verificato un errore inaspettato durante la creazione del video: {e}")
         import traceback
         traceback.print_exc()
-# ==============================================================================
-# MAIN ANALYSIS FUNCTION (UNIFIED)
-# ==============================================================================
 
-def run_analysis(subj_name='subj_01', data_dir_str='./eyetracking_file', output_dir_str='./results', 
-                 un_enriched_mode=False, generate_video=True, run_yolo_analysis=False):
-    """
-    Funzione principale per eseguire l'intera pipeline di analisi.
-    Include la logica originale di SPEED e l'analisi YOLO opzionale.
-    """
+def run_analysis(subj_name='subj_01', data_dir_str='./eyetracking_file', output_dir_str='./results', un_enriched_mode=False, generate_video=True):
+    """Funzione principale per eseguire l'intera pipeline di analisi basata su segmenti di eventi."""
     pd.options.mode.chained_assignment = None
-    data_dir = Path(data_dir_str)
-    output_dir = Path(output_dir_str)
+    data_dir, output_dir = Path(data_dir_str), Path(output_dir_str)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # --- Yolo Analysis (Optional) ---
-    if run_yolo_analysis:
-        if not YOLO_AVAILABLE:
-            print("YOLO Analysis was requested but libraries are not installed. Skipping.")
-        else:
-            try:
-                # Setup a dedicated directory for YOLO's frame-by-frame pickle files
-                yolo_data_dir = output_dir / "yolo_frame_data"
-                setup_directories([yolo_data_dir])
-
-                aligned_df = align_yolo_data(
-                    gaze_path=data_dir / 'gaze.csv',
-                    world_path=data_dir / 'world_timestamps.csv',
-                    pupil_path=data_dir / '3d_eye_states.csv',
-                    events_path=data_dir / 'events.csv'
-                )
-
-                if aligned_df is not None:
-                    analyzer = GazeAnalyzer(
-                        video_path=str(data_dir / 'external.mp4'),
-                        aligned_data_df=aligned_df,
-                        data_dir=str(yolo_data_dir)
-                    )
-                    analyzer.run_yolo_tracking()
-                    stats_class, stats_instance, id_map = analyzer.analyze_fixations_and_stats()
-                    df_class, df_instance, df_id = analyzer.create_results_tables(stats_class, stats_instance, id_map)
-
-                    # Save YOLO results
-                    df_class.to_csv(output_dir / 'statistiche_per_classe.csv', index=False, float_format='%.4f')
-                    df_instance.to_csv(output_dir / 'statistiche_per_istanza.csv', index=False, float_format='%.4f')
-                    df_id.to_csv(output_dir / 'mappa_id_classe.csv', index=False)
-
-                    print("\n--- YOLO: Statistiche per Classe ---")
-                    print(df_class)
-                    print(f"\nRisultati salvati in '{output_dir / 'statistiche_per_classe.csv'}'")
-            except Exception as e:
-                print(f"\nAn error occurred during YOLO analysis: {e}")
-                traceback.print_exc()
-
-    # --- Standard SPEED Analysis (Event-based) ---
-    print("\n--- Starting Standard Event-Based Analysis ---")
     video_width, video_height = get_video_dimensions(data_dir / 'external.mp4')
     
     try:
         all_data = load_all_data(data_dir, un_enriched_mode)
     except FileNotFoundError as e:
-        print(f"Standard analysis interrupted. {e}")
+        print(f"Analisi interrotta. {e}")
         return
         
     events_df = all_data.get('events')
     if events_df is None or events_df.empty:
-        print("Error: events.csv not loaded or empty. Cannot proceed with standard analysis.")
+        print("Errore: events.csv non caricato o vuoto. Impossibile procedere.")
         return
         
     all_results = []
     if len(events_df) > 1:
-        print(f"\nFound {len(events_df)} events, processing {len(events_df) - 1} segments.")
+        print(f"\nTrovati {len(events_df)} eventi, elaborazione di {len(events_df) - 1} segmenti.")
         for i in range(len(events_df) - 1):
-            event_row = events_df.iloc[i]
-            start_ts = events_df.iloc[i]['timestamp [ns]']
-            end_ts = events_df.iloc[i+1]['timestamp [ns]']
+            event_row, start_ts, end_ts = events_df.iloc[i], events_df.iloc[i]['timestamp [ns]'], events_df.iloc[i+1]['timestamp [ns]']
             try:
                 event_results = process_segment(event_row, start_ts, end_ts, all_data, subj_name, output_dir, un_enriched_mode, video_width, video_height)
                 if event_results:
                     all_results.append(event_results)
             except Exception as e:
-                print(f"Could not process segment for event '{event_row.get('name', i)}'. Error: {e}")
+                print(f"Impossibile elaborare il segmento per l'evento '{event_row.get('name', i)}'. Errore: {e}")
                 traceback.print_exc()
     else:
-        print("Warning: Fewer than two events found. Cannot process segments.")
+        print("Attenzione: Trovati meno di due eventi. Impossibile elaborare segmenti.")
         
     if all_results:
         results_df = pd.DataFrame(all_results)
@@ -1290,15 +1020,9 @@ def run_analysis(subj_name='subj_01', data_dir_str='./eyetracking_file', output_
         results_df = results_df[final_columns]
         results_filename = output_dir / f'summary_results_{subj_name}.csv'
         results_df.to_csv(results_filename, index=False)
-        print(f"\nAggregated results saved to {results_filename}")
+        print(f"\nRisultati aggregati salvati in {results_filename}")
     else:
-        print("\nNo standard analysis results were generated.")
+        print("\nNessun risultato di analisi è stato generato.")
         
     if generate_video:
         create_analysis_video(data_dir, output_dir)
-
-    # --- Final Cleanup ---
-    gc.collect()
-    if YOLO_AVAILABLE and torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    print("Memory cleanup complete.")
