@@ -1,4 +1,4 @@
-# SPEED (labScoc Processing and Extraction of Eye tracking Data)
+# SPEED (labScoc Processing and Extraction of Eye tracking Data) - Computer Vision assisted version
 
 *Eye-Tracking Data Analysis Software*
 
