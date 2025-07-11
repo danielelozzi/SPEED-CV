@@ -8,15 +8,16 @@ import webbrowser
 from pathlib import Path
 import traceback
 
-# Importa la funzione orchestratrice principale dal nuovo script
+# Import the main orchestrator function from the new script
 try:
     import main_analyzer
 except ImportError:
-    messagebox.showerror("Errore Critico", "File 'main_analyzer.py' non trovato. Assicurati che sia nella stessa cartella di GUI.py.")
+    messagebox.showerror("Critical Error", "File 'main_analyzer.py' not found. Make sure it is in the same folder as GUI.py.")
     exit()
 
 
-# --- Configurazione ---
+# --- Configuration ---
+# Dictionary mapping standard file names to their GUI labels
 REQUIRED_FILES = {
     "events.csv": "events.csv",
     "gaze_enriched.csv": "gaze_enriched.csv",
@@ -31,6 +32,7 @@ REQUIRED_FILES = {
     "world_timestamps.csv": "world_timestamps.csv",
     "surface_positions.csv": "surface_positions.csv",
 }
+# Descriptions for the "Browse..." dialog windows
 FILE_DESCRIPTIONS = {
     "events.csv": "Select the events CSV file",
     "gaze_enriched.csv": "Select the gaze CSV file (enriched)",
@@ -45,34 +47,39 @@ FILE_DESCRIPTIONS = {
     "world_timestamps.csv": "Select the world timestamps CSV",
     "surface_positions.csv": "Select the Marker Mapper surface positions CSV",
 }
-OPTIONAL_FOR_UNENRICHED = ["gaze_enriched.csv", "fixations_enriched.csv"]
 
 class SpeedApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SPEED v2.0 - Cognitive and Behavioral Science Lab")
+        self.root.title("SPEED v2.1 - Cognitive and Behavioral Science Lab")
         self.file_entries = {}
+        self.file_labels = {}
         
         main_frame = tk.Frame(root, padx=10, pady=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Participant Name
+        # Participant Name Section
         name_frame = tk.Frame(main_frame); name_frame.pack(fill=tk.X, pady=5)
         name_label = tk.Label(name_frame, text="Participant Name:", width=20, anchor='w'); name_label.pack(side=tk.LEFT)
         self.participant_name_var = tk.StringVar(); self.participant_name_var.trace_add("write", self.update_output_dir_default)
         self.name_entry = tk.Entry(name_frame, textvariable=self.participant_name_var); self.name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # Output Directory
+        # Output Folder Section
         output_frame = tk.Frame(main_frame); output_frame.pack(fill=tk.X, pady=5)
         output_label = tk.Label(output_frame, text="Output Folder:", width=20, anchor='w'); output_label.pack(side=tk.LEFT)
         self.output_dir_entry = tk.Entry(output_frame); self.output_dir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         output_button = tk.Button(output_frame, text="Browse...", command=self.select_output_dir); output_button.pack(side=tk.RIGHT)
 
-        # Analysis Options
+        # Analysis Options Section
         options_frame = tk.LabelFrame(main_frame, text="Analysis Options", padx=5, pady=5); options_frame.pack(fill=tk.X, pady=(5,0))
         
+        # Checkbox for un-enriched mode
+        self.unenriched_var = tk.BooleanVar(value=False)
+        self.unenriched_checkbox = tk.Checkbutton(options_frame, text="Analyze un-enriched data only", variable=self.unenriched_var, command=self.update_ui_states)
+        self.unenriched_checkbox.pack(anchor='w')
+        
         self.run_standard_var = tk.BooleanVar(value=True)
-        self.standard_checkbox = tk.Checkbutton(options_frame, text="Run Standard Event-Based Analysis", variable=self.run_standard_var)
+        self.standard_checkbox = tk.Checkbutton(options_frame, text="Run Standard Event-Based Analysis", variable=self.run_standard_var, command=self.update_ui_states)
         self.standard_checkbox.pack(anchor='w')
         
         self.generate_standard_video_var = tk.BooleanVar(value=False)
@@ -80,36 +87,36 @@ class SpeedApp:
         self.standard_video_checkbox.pack(anchor='w', padx=(20, 0))
 
         self.yolo_analysis_var = tk.BooleanVar(value=False)
-        self.yolo_checkbox = tk.Checkbutton(options_frame, text="Run YOLO Object Detection Analysis (requires GPU)", variable=self.yolo_analysis_var, command=self.toggle_yolo_requirements)
+        self.yolo_checkbox = tk.Checkbutton(options_frame, text="Run YOLO Object Detection Analysis (requires GPU)", variable=self.yolo_analysis_var, command=self.update_ui_states)
         self.yolo_checkbox.pack(anchor='w')
         
         self.surface_yolo_var = tk.BooleanVar(value=False)
-        self.surface_yolo_checkbox = tk.Checkbutton(options_frame, text="└─ Run YOLO on Marker-Mapped Surface only (slow)", variable=self.surface_yolo_var, command=self.toggle_yolo_requirements)
+        self.surface_yolo_checkbox = tk.Checkbutton(options_frame, text="└─ Run YOLO on Marker-Mapped Surface only (slow)", variable=self.surface_yolo_var, command=self.update_ui_states)
         self.surface_yolo_checkbox.pack(anchor='w', padx=(20, 0))
 
         self.generate_surface_video_var = tk.BooleanVar(value=True)
         self.surface_video_checkbox = tk.Checkbutton(options_frame, text="   └─ Generate Warped Surface Video", variable=self.generate_surface_video_var)
         self.surface_video_checkbox.pack(anchor='w', padx=(40, 0))
 
-
-        # File Selection
+        # File Selection Section
         files_frame = tk.LabelFrame(main_frame, text="Select Data Files", padx=5, pady=5)
         files_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         for std_name, display_label in REQUIRED_FILES.items():
             row_frame = tk.Frame(files_frame); row_frame.pack(fill=tk.X, pady=2)
             label = tk.Label(row_frame, text=f"{display_label}:", width=35, anchor='w'); label.pack(side=tk.LEFT)
+            self.file_labels[std_name] = label # Save a reference to the label
             entry = tk.Entry(row_frame); entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
             self.file_entries[std_name] = entry
             description = FILE_DESCRIPTIONS[std_name]
             button = tk.Button(row_frame, text="Browse...", command=lambda e=entry, d=description: self.select_file(e, d)); button.pack(side=tk.RIGHT)
         
-        self.toggle_yolo_requirements()
+        self.update_ui_states()
 
         # Run Button & Status
         run_button = tk.Button(main_frame, text="Start Analysis", command=self.run_analysis_process, font=('Helvetica', 10, 'bold')); run_button.pack(pady=10)
         self.status_label = tk.Label(main_frame, text="Ready", fg="blue"); self.status_label.pack(pady=5)
         
-        # Links
+        # Links at the bottom
         link_frame = tk.Frame(main_frame)
         link_frame.pack(side=tk.BOTTOM, pady=10)
         lab_link = tk.Label(link_frame, text="Cognitive and Behavioral Science Lab", fg="blue", cursor="hand2"); lab_link.pack(side=tk.LEFT, padx=10)
@@ -117,7 +124,6 @@ class SpeedApp:
         github_link = tk.Label(link_frame, text="Daniele Lozzi's Github Page", fg="blue", cursor="hand2")
         github_link.pack(side=tk.LEFT, padx=10)
         github_link.bind("<Button-1>", lambda e: self.open_link("https://github.com/danielelozzi/"))
-
 
     def update_output_dir_default(self, *args):
         subj_name = self.participant_name_var.get().strip()
@@ -133,31 +139,55 @@ class SpeedApp:
             self.output_dir_entry.delete(0, tk.END)
             self.output_dir_entry.insert(0, directory_path)
 
-    def toggle_yolo_requirements(self):
+    def update_ui_states(self):
+        """Updates the UI state based on user selections."""
+        is_unenriched_only = self.unenriched_var.get()
         run_yolo = self.yolo_analysis_var.get()
         run_surface_yolo = self.surface_yolo_var.get()
 
-        # Abilita/disabilita i checkbox dipendenti
+        # Enable/disable dependent checkboxes
+        self.standard_video_checkbox.config(state=tk.NORMAL if self.run_standard_var.get() else tk.DISABLED)
         self.surface_yolo_checkbox.config(state=tk.NORMAL if run_yolo else tk.DISABLED)
         self.surface_video_checkbox.config(state=tk.NORMAL if run_yolo and run_surface_yolo else tk.DISABLED)
         
+        # Logic to uncheck dependent options
+        if not self.run_standard_var.get():
+            self.generate_standard_video_var.set(False)
         if not run_yolo:
             self.surface_yolo_var.set(False)
             run_surface_yolo = False
         if not run_surface_yolo:
             self.generate_surface_video_var.set(False)
 
-        # Evidenzia i file richiesti
-        self.file_entries["world_timestamps.csv"].master.winfo_children()[0].config(fg="red" if run_yolo else "black")
-        self.file_entries["surface_positions.csv"].master.winfo_children()[0].config(fg="red" if run_surface_yolo else "black")
-        self.file_entries["gaze_enriched.csv"].master.winfo_children()[0].config(fg="red" if run_surface_yolo else "black")
+        # Highlight required files based on logic
+        # Define which files are required for each option
+        requirements = {
+            "world_timestamps.csv": run_yolo,
+            "surface_positions.csv": run_surface_yolo,
+            "gaze_enriched.csv": not is_unenriched_only,
+            "fixations_enriched.csv": not is_unenriched_only,
+            "gaze.csv": True, # Always required as a base
+        }
+        
+        # Iterate over all files and set the label color
+        for fname, label_widget in self.file_labels.items():
+            is_required = requirements.get(fname, True) # By default, a file is required
+
+            label_widget.config(fg="red" if is_required else "black")
+            
+            # Disable input for unnecessary files
+            entry_state = tk.NORMAL if is_required else tk.DISABLED
+            self.file_entries[fname].config(state=entry_state)
+            if not is_required:
+                 self.file_entries[fname].delete(0, tk.END)
 
     def select_file(self, entry_widget, description):
         file_path = filedialog.askopenfilename(title=description)
         if file_path:
             entry_widget.delete(0, tk.END); entry_widget.insert(0, file_path)
 
-    def open_link(self, url): webbrowser.open_new(url)
+    def open_link(self, url):
+        webbrowser.open_new(url)
 
     def run_analysis_process(self):
         subj_name = self.name_entry.get().strip()
@@ -165,8 +195,9 @@ class SpeedApp:
         if not subj_name or not output_dir_path:
             messagebox.showerror("Error", "Please enter a participant name and select an output folder."); return
 
-        # Raccogli tutte le opzioni dalla GUI
+        # Collect all options from the GUI
         options = {
+            "un_enriched_mode": self.unenriched_var.get(),
             "run_standard": self.run_standard_var.get(),
             "generate_standard_video": self.generate_standard_video_var.get(),
             "run_yolo": self.yolo_analysis_var.get(),
@@ -176,19 +207,31 @@ class SpeedApp:
         
         selected_files = {std_name: entry.get().strip() for std_name, entry in self.file_entries.items()}
 
-        # Controllo file mancanti
+        # Check for missing files based on selected options
         missing_files = []
+        is_unenriched_only = options["un_enriched_mode"]
+        
+        # File checking logic
         required_by_logic = {
             "world_timestamps.csv": options["run_yolo"],
             "surface_positions.csv": options["run_surface_yolo"],
-            "gaze_enriched.csv": options["run_surface_yolo"]
+            "gaze_enriched.csv": not is_unenriched_only,
+            "fixations_enriched.csv": not is_unenriched_only
         }
+
         for name, path in selected_files.items():
+            # Check if a file is required by the logic but was not provided
             if required_by_logic.get(name, False) and not path:
                  missing_files.append(REQUIRED_FILES[name])
         
+        # Check for always-required files
+        always_required = ["events.csv", "gaze.csv", "fixations.csv", "3d_eye_states.csv", "blinks.csv", "saccades.csv", "internal.mp4", "external.mp4"]
+        for name in always_required:
+            if not selected_files.get(name):
+                missing_files.append(REQUIRED_FILES[name])
+
         if missing_files:
-            messagebox.showerror("Error", f"Please select all required files for the selected options. Missing: {', '.join(missing_files)}"); return
+            messagebox.showerror("Error", f"Please select all required files for the selected options. Missing: {', '.join(sorted(list(set(missing_files))))}"); return
 
         try:
             self.status_label.config(text=f"Preparing folders for {subj_name}...", fg="blue"); self.root.update_idletasks()
@@ -202,7 +245,7 @@ class SpeedApp:
 
             self.status_label.config(text="Starting analysis... This might take some time.", fg="blue"); self.root.update_idletasks()
             
-            # Chiama la funzione orchestratrice con tutte le opzioni
+            # Call the orchestrator function with all options
             main_analyzer.run_full_analysis(
                 subj_name=subj_name, 
                 data_dir_str=str(data_dir), 

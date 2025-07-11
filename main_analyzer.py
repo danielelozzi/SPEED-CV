@@ -8,10 +8,11 @@ import numpy as np
 import cv2
 from tqdm import tqdm
 
-# --- ANALYSIS MODULE IMPORTS ---
+# --- Analysis Module Imports ---
 try:
     import speed_script_events as speed_events
-    import process_gaze_data_v2 as yolo_events
+    # 'process_gaze_data_v2' is for full-frame YOLO analysis, not used in this version
+    # import process_gaze_data_v2 as yolo_events 
     from ultralytics import YOLO
     YOLO_AVAILABLE = True
     print("Analytics and YOLO modules successfully imported.")
@@ -23,9 +24,10 @@ except ImportError as e:
 # FUNCTION FOR SURFACE-BASED ANALYSIS
 # ==============================================================================
 
-def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, generate_video: bool):
+def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, generate_video: bool, un_enriched_mode: bool):
     """
     Performs YOLO analysis by warping each video frame based on the 'surface_positions.csv' file.
+    Handles both enriched and un-enriched modes.
     """
     print("\n>>> RUNNING YOLO ANALYSIS ON MARKER-MAPPED SURFACE...")
     if not YOLO_AVAILABLE:
@@ -34,9 +36,16 @@ def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, 
 
     # Required file paths
     world_timestamps_path = data_dir / 'world_timestamps.csv'
-    gaze_csv_path = data_dir / 'gaze_enriched.csv'
     surface_positions_path = data_dir / 'surface_positions.csv'
     input_video_path = data_dir / 'external.mp4'
+    
+    # Select the gaze file based on the mode
+    if un_enriched_mode:
+        gaze_csv_path = data_dir / 'gaze.csv'
+        print("Surface analysis running in UN-ENRICHED mode (using gaze.csv).")
+    else:
+        gaze_csv_path = data_dir / 'gaze_enriched.csv'
+        print("Surface analysis running in ENRICHED mode (using gaze_enriched.csv).")
 
     for f in [world_timestamps_path, gaze_csv_path, surface_positions_path, input_video_path]:
         if not f.exists():
@@ -46,15 +55,25 @@ def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, 
     print("Timestamp alignment for surface analysis...")
     world_timestamps = pd.read_csv(world_timestamps_path)
     world_timestamps['world_index'] = world_timestamps.index
-    gaze = pd.read_csv(gaze_csv_path)
-    gaze_on_surface = gaze[gaze['gaze detected on surface'] == True].copy()
-    gaze_on_surface.rename(columns={'gaze position on surface x [normalized]': 'gaze_x_norm', 
-                                    'gaze position on surface y [normalized]': 'gaze_y_norm',
-                                    'timestamp [ns]': 'gaze_timestamp_ns'}, inplace=True)
+    gaze_data = pd.read_csv(gaze_csv_path)
+
+    # Prepare the gaze dataframe based on the mode
+    if un_enriched_mode:
+        gaze_data.rename(columns={'timestamp [ns]': 'gaze_timestamp_ns',
+                                  'gaze x [px]': 'gaze_x_px',
+                                  'gaze y [px]': 'gaze_y_px'}, inplace=True)
+        gaze_to_align = gaze_data[['gaze_timestamp_ns', 'gaze_x_px', 'gaze_y_px']]
+    else:
+        gaze_on_surface = gaze_data[gaze_data['gaze detected on surface'] == True].copy()
+        gaze_on_surface.rename(columns={'gaze position on surface x [normalized]': 'gaze_x_norm', 
+                                        'gaze position on surface y [normalized]': 'gaze_y_norm',
+                                        'timestamp [ns]': 'gaze_timestamp_ns'}, inplace=True)
+        gaze_to_align = gaze_on_surface[['gaze_timestamp_ns', 'gaze_x_norm', 'gaze_y_norm']]
+
     world_timestamps.rename(columns={'timestamp [ns]': 'world_timestamp_ns'}, inplace=True)
     aligned_data = pd.merge_asof(
         world_timestamps.sort_values('world_timestamp_ns'),
-        gaze_on_surface.sort_values('gaze_timestamp_ns'),
+        gaze_to_align.sort_values('gaze_timestamp_ns'),
         left_on='world_timestamp_ns', right_on='gaze_timestamp_ns',
         direction='nearest', tolerance=pd.Timedelta('100ms')
     )
@@ -124,8 +143,23 @@ def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, 
         # 5. YOLO Analysis on the Warped Frame
         yolo_results = model(warped_frame, verbose=False)
         
-        gaze_x_norm, gaze_y_norm = (gaze_info.iloc[0]['gaze_x_norm'], gaze_info.iloc[0]['gaze_y_norm']) if not gaze_info.empty else (np.nan, np.nan)
-        
+        gaze_x_norm, gaze_y_norm = np.nan, np.nan
+        if not gaze_info.empty:
+            if un_enriched_mode:
+                gaze_x_px = gaze_info.iloc[0].get('gaze_x_px')
+                gaze_y_px = gaze_info.iloc[0].get('gaze_y_px')
+                if pd.notna(gaze_x_px) and pd.notna(gaze_y_px):
+                    # Transform gaze coordinates from pixels to warped surface coordinates
+                    gaze_point_px = np.float32([[[gaze_x_px, gaze_y_px]]])
+                    warped_gaze_point = cv2.perspectiveTransform(gaze_point_px, matrix)
+                    warped_x = warped_gaze_point[0][0][0]
+                    warped_y = warped_gaze_point[0][0][1]
+                    gaze_x_norm = warped_x / output_width
+                    gaze_y_norm = warped_y / output_height
+            else:
+                gaze_x_norm = gaze_info.iloc[0].get('gaze_x_norm')
+                gaze_y_norm = gaze_info.iloc[0].get('gaze_y_norm')
+
         frame_detections = []
         for r in yolo_results:
             for box in r.boxes:
@@ -138,8 +172,9 @@ def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, 
                 
                 gaze_in_box = False
                 if pd.notna(gaze_x_norm):
-                    gaze_px, gaze_py = int(gaze_x_norm * output_width), int(gaze_y_norm * output_height)
-                    if (x1 <= gaze_px <= x2) and (y1 <= gaze_py <= y2):
+                    gaze_px_on_surface = int(gaze_x_norm * output_width)
+                    gaze_py_on_surface = int(gaze_y_norm * output_height)
+                    if (x1 <= gaze_px_on_surface <= x2) and (y1 <= gaze_py_on_surface <= y2):
                         gaze_in_box = True
 
                 frame_detections.append({
@@ -180,12 +215,13 @@ def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, 
 
 def run_full_analysis(subj_name: str, data_dir_str: str, output_dir_str: str, options: dict):
     """
-    Orchestrates the entire analysis pipeline by calling imported functions.
+    Orchestrates the entire analysis pipeline by calling the imported functions.
     """
     print(f"--- STARTING FULL ANALYSIS FOR SUBJECT: {subj_name} ---")
     
     data_dir = Path(data_dir_str)
     output_dir = Path(output_dir_str)
+    un_enriched_mode = options.get("un_enriched_mode", False)
     
     # --- 1. STANDARD EVENT-BASED ANALYSIS ---
     if options.get("run_standard"):
@@ -195,7 +231,7 @@ def run_full_analysis(subj_name: str, data_dir_str: str, output_dir_str: str, op
                 subj_name=subj_name,
                 data_dir_str=str(data_dir),
                 output_dir_str=str(output_dir),
-                un_enriched_mode=False,
+                un_enriched_mode=un_enriched_mode,
                 generate_video=options.get("generate_standard_video")
             )
             print(">>> Standard analysis finished.")
@@ -206,32 +242,22 @@ def run_full_analysis(subj_name: str, data_dir_str: str, output_dir_str: str, op
     # --- 2. YOLO-BASED ANALYSIS ---
     if options.get("run_yolo"):
         if options.get("run_surface_yolo"):
-            # Surface mode
+            # Surface Mode
             try:
                 run_yolo_surface_analysis(
                     data_dir=data_dir,
                     output_dir=output_dir,
                     subj_name=subj_name,
-                    generate_video=options.get("generate_surface_video")
+                    generate_video=options.get("generate_surface_video"),
+                    un_enriched_mode=un_enriched_mode
                 )
             except Exception as e:
                 print(f"!!! Error during YOLO surface analysis: {e}")
                 traceback.print_exc()
         else:
-            # Full-frame mode (using the yolo_events module)
+            # Full-frame Mode (placeholder)
             print("\n>>> RUNNING FULL-FRAME YOLO ANALYSIS...")
-            try:
-                yolo_output_dir = output_dir / "yolo_fullframe_analysis"
-                yolo_output_dir.mkdir(parents=True, exist_ok=True)
-                
-                # This part would call a refactored, callable function from process_gaze_data_v2.py.
-                # Since the original script uses argparse, a direct call isn't possible without modification.
-                # For this reason, the call is simulated here.
-                print("NOTE: Full-frame YOLO analysis requires 'process_gaze_data_v2.py' to be refactored into a callable function.")
-                print("This feature is currently a placeholder. Surface analysis will be performed if selected.")
-
-            except Exception as e:
-                print(f"!!! Error during full-frame YOLO analysis: {e}")
-                traceback.print_exc()
+            print("NOTE: Full-frame YOLO analysis is not the primary feature of this version.")
+            print("Surface analysis will be performed if selected.")
 
     print(f"\n--- FULL ANALYSIS FOR {subj_name} COMPLETED ---")
