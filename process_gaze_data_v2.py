@@ -13,18 +13,18 @@ import cv2
 import gc
 
 # ==============================================================================
-# FUNZIONI HELPER (Invariate rispetto alla versione precedente)
+# HELPER FUNCTIONS
 # ==============================================================================
 
 def setup_directories(dirs):
-    """Crea le directory specificate se non esistono."""
+    """Creates the specified directories if they don't exist."""
     for d in dirs:
         if not os.path.exists(d):
             os.makedirs(d)
-            print(f"Cartella '{d}' creata.")
+            print(f"Folder '{d}' created.")
 
 def read_pickle(file_path):
-    """Legge un singolo file pickle."""
+    """Reads a single pickle file."""
     try:
         with open(file_path, 'rb') as f:
             data = pickle.load(f)
@@ -34,18 +34,18 @@ def read_pickle(file_path):
         return None
 
 def save_pickle(obj, file_path):
-    """Salva un oggetto Python in un file pickle."""
+    """Saves a Python object to a pickle file."""
     try:
         with open(file_path, 'wb') as f:
             pickle.dump(obj, f)
     except Exception as e:
-        print(f"Errore durante il salvataggio dell'oggetto in {file_path}: {e}")
+        print(f"Error while saving object to {file_path}: {e}")
 
 def align_data(gaze_path, world_path, pupil_path, events_path):
     """
-    Allinea i dati da vari file CSV basandosi sui timestamp.
+    Aligns data from various CSV files based on timestamps.
     """
-    print("Allineamento dei dati in corso...")
+    print("Aligning data...")
     external = pd.read_csv(world_path)
     external.rename(columns={'timestamp [ns]': 'timestamp [ns] external'}, inplace=True)
     external['index_external'] = range(1, len(external) + 1)
@@ -73,14 +73,15 @@ def align_data(gaze_path, world_path, pupil_path, events_path):
     events = events.sort_values('timestamp [ns] events')
     final_df = pd.merge_asof(mean_timestamps, events, left_on='timestamp [ns] external', right_on='timestamp [ns] events', direction='backward')
 
+    # Normalize gaze coordinates based on assumed 1600x1200 resolution
     final_df['gaze x [px]'] = final_df['gaze x [px]'] / 1600.0
     final_df['gaze y [px]'] = final_df['gaze y [px]'] / 1200.0
 
-    print("Allineamento dati completato.")
+    print("Data alignment complete.")
     return final_df.dropna(subset=['name'])
 
 # ==============================================================================
-# CLASSE PRINCIPALE PER L'ANALISI
+# MAIN ANALYSIS CLASS
 # ==============================================================================
 
 class GazeAnalyzer:
@@ -88,7 +89,8 @@ class GazeAnalyzer:
         self.video_path = video_path
         self.aligned_data = aligned_data_df
         self.data_dir = data_dir
-        # Selezione del dispositivo con priorità: CUDA > MPS (Apple Silicon) > CPU
+        
+        # Device selection priority: CUDA > MPS (Apple Silicon) > CPU
         if torch.cuda.is_available():
             self.device = 'cuda'
         elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
@@ -96,39 +98,39 @@ class GazeAnalyzer:
         else:
             self.device = 'cpu'
 
-        print(f"Utilizzo del dispositivo: {self.device}")
+        print(f"Using device: {self.device}")
         self.model = YOLO("yolov8n.pt")
         self.model.to(self.device)
         self.model_classes = self.model.names
 
     def generate_annotated_video(self, output_path):
-        """Genera un video con annotazioni di gaze e bounding box."""
-        print(f"Inizio generazione video annotato: '{output_path}'...")
+        """Generates a video with gaze and bounding box annotations."""
+        print(f"Starting annotated video generation: '{output_path}'...")
 
         cap = cv2.VideoCapture(self.video_path)
         if not cap.isOpened():
-            print(f"Errore: Impossibile aprire il video sorgente {self.video_path}")
+            print(f"Error: Could not open source video {self.video_path}")
             return
 
-        # Ottieni proprietà del video
+        # Get video properties
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        # Setup del video writer
+        # Setup video writer
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-        # Mappa per un accesso rapido ai dati allineati per frame
+        # Map for quick access to aligned data per frame
         data_map = {row['index_external'] - 1: row for _, row in self.aligned_data.iterrows()}
 
-        for frame_idx in tqdm(range(frame_count), desc="Generazione Video"):
+        for frame_idx in tqdm(range(frame_count), desc="Generating Video"):
             ret, frame = cap.read()
             if not ret:
                 break
 
-            # Carica e disegna dati YOLO per il frame corrente
+            # Load and draw YOLO data for the current frame
             pickle_path = os.path.join(self.data_dir, f"{frame_idx}.pickle")
             yolo_data = read_pickle(pickle_path)
             if yolo_data and yolo_data.boxes and yolo_data.boxes.id is not None:
@@ -141,7 +143,7 @@ class GazeAnalyzer:
                     cv2.rectangle(frame, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (255, 0, 0), 2)
                     cv2.putText(frame, label, (int(xmin), int(ymin) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
-            # Disegna il punto del gaze se presente
+            # Draw the gaze point if present
             if frame_idx in data_map and pd.notna(data_map[frame_idx]['gaze x [px]']):
                 gaze_x = int(data_map[frame_idx]['gaze x [px]'] * width)
                 gaze_y = int(data_map[frame_idx]['gaze y [px]'] * height)
@@ -151,50 +153,49 @@ class GazeAnalyzer:
 
         cap.release()
         out.release()
-        print(f"Video annotato salvato con successo in '{output_path}'.")
+        print(f"Annotated video successfully saved to '{output_path}'.")
 
     def run_yolo_tracking(self):
-        """Esegue il tracking YOLO sul video e salva i risultati per ogni frame."""
-        print(f"Avvio del tracking YOLO su '{self.video_path}'...")
+        """Runs YOLO tracking on the video and saves results for each frame."""
+        print(f"Starting YOLO tracking on '{self.video_path}'...")
         if len(os.listdir(self.data_dir)) >= len(self.aligned_data['index_external'].unique()):
-            print("I dati di tracking YOLO sembrano già esistere. Salto questa fase.")
+            print("YOLO tracking data seems to already exist. Skipping this step.")
             return
             
         stream = self.model.track(self.video_path, stream=True, verbose=False)
         
         for n_frame, track_frame in tqdm(enumerate(stream), desc="Tracking Video"):
             try:
-                track_frame.orig_img = None
+                track_frame.orig_img = None # Reduce pickle file size
                 file_name = os.path.join(self.data_dir, f"{n_frame}.pickle")
                 save_pickle(track_frame, file_name)
             except Exception as e:
-                print(f'Errore al frame {n_frame}: {e}')
+                print(f'Error at frame {n_frame}: {e}')
         gc.collect()
 
     def analyze_fixations_and_stats(self):
         """
-        Analizza le fissazioni e calcola le statistiche per classe e per istanza.
+        Analyzes fixations and calculates statistics per class and per instance.
         """
-        print("Analisi delle fissazioni e calcolo delle statistiche...")
+        print("Analyzing fixations and calculating statistics...")
         
-        # Strutture dati per accumulare le statistiche
-        # defaultdict annidati per creare automaticamente le chiavi mancanti
+        # Nested defaultdicts to automatically create missing keys
         stats_per_class = defaultdict(lambda: defaultdict(lambda: {'detection_count': 0, 'fixation_count': 0, 'pupil_diameters': []}))
         stats_per_instance = defaultdict(lambda: defaultdict(lambda: {'detection_count': 0, 'fixation_count': 0, 'pupil_diameters': []}))
         instance_to_class_map = {}
 
-        for _, row in tqdm(self.aligned_data.iterrows(), total=self.aligned_data.shape[0], desc="Analisi Frame"):
+        for _, row in tqdm(self.aligned_data.iterrows(), total=self.aligned_data.shape[0], desc="Analyzing Frames"):
             event_name = row['name']
             frame_idx = row['index_external'] - 1
             
             pickle_path = os.path.join(self.data_dir, f"{frame_idx}.pickle")
             yolo_data = read_pickle(pickle_path)
             
-            # Controlla se ci sono dati di tracking validi. L'attributo .id è None se il tracker non ha assegnato ID.
+            # The .id attribute is None if the tracker did not assign IDs.
             if yolo_data is None or yolo_data.boxes is None or yolo_data.boxes.id is None:
                 continue
 
-            # Aggiorna conteggio rilevazioni per ogni oggetto presente nel frame
+            # Update detection count for each object in the frame
             detected_ids_in_frame = set()
             for i in range(len(yolo_data.boxes.id)):
                 class_idx = int(yolo_data.boxes.cls[i])
@@ -210,8 +211,7 @@ class GazeAnalyzer:
                      stats_per_instance[event_name][instance_id]['detection_count'] += 1
                      detected_ids_in_frame.add(instance_id)
 
-
-            # Controlla fissazione
+            # Check for fixation
             gaze_x = row['gaze x [px]']
             gaze_y = row['gaze y [px]']
             pupil_diameter = row['pupil diameter left [mm]']
@@ -227,131 +227,131 @@ class GazeAnalyzer:
                     object_id = int(yolo_data.boxes.id[i])
                     instance_id = f"{class_name}_{object_id}"
                     
-                    # Accumula dati per la fissazione
+                    # Accumulate fixation data
                     stats_per_class[event_name][class_name]['fixation_count'] += 1
                     stats_per_class[event_name][class_name]['pupil_diameters'].append(pupil_diameter)
                     
                     stats_per_instance[event_name][instance_id]['fixation_count'] += 1
                     stats_per_instance[event_name][instance_id]['pupil_diameters'].append(pupil_diameter)
                     
-                    break # Passa al frame successivo dopo aver trovato la prima fissazione
+                    break # Move to the next frame after finding the first fixation
 
-        print("Analisi completata. Generazione delle tabelle...")
+        print("Analysis complete. Generating tables...")
         return stats_per_class, stats_per_instance, instance_to_class_map
 
     def create_results_tables(self, stats_per_class, stats_per_instance, instance_to_class_map):
-        """Crea due DataFrame finali con le statistiche calcolate."""
+        """Creates two final DataFrames with the calculated statistics."""
         
-        # Tabella 1: Per Classe
+        # Table 1: By Class
         event_names = sorted(stats_per_class.keys())
         all_classes = sorted(set(cls for events in stats_per_class.values() for cls in events.keys()))
         
         class_data = []
         for event in event_names:
-            row = {'evento': event}
+            row = {'event': event}
             for cls in all_classes:
                 stats = stats_per_class[event][cls]
                 fixations = stats['fixation_count']
                 detections = stats['detection_count']
                 pupil_diams = stats['pupil_diameters']
                 
-                row[f'{cls}_fissazioni_normalizzate'] = fixations / detections if detections > 0 else 0
-                row[f'{cls}_diametro_pupilla_medio'] = np.mean(pupil_diams) if pupil_diams else np.nan
+                row[f'{cls}_normalized_fixations'] = fixations / detections if detections > 0 else 0
+                row[f'{cls}_mean_pupil_diameter'] = np.mean(pupil_diams) if pupil_diams else np.nan
             class_data.append(row)
         df_class = pd.DataFrame(class_data)
 
-        # Tabella 2: Per Istanza
+        # Table 2: By Instance
         all_instances = sorted(set(inst for events in stats_per_instance.values() for inst in events.keys()))
 
         instance_data = []
         for event in event_names:
-            row = {'evento': event}
+            row = {'event': event}
             for inst_id in all_instances:
                 stats = stats_per_instance[event][inst_id]
                 fixations = stats['fixation_count']
                 detections = stats['detection_count']
                 pupil_diams = stats['pupil_diameters']
 
-                row[f'{inst_id}_fissazioni_normalizzate'] = fixations / detections if detections > 0 else 0
-                row[f'{inst_id}_diametro_pupilla_medio'] = np.mean(pupil_diams) if pupil_diams else np.nan
+                row[f'{inst_id}_normalized_fixations'] = fixations / detections if detections > 0 else 0
+                row[f'{inst_id}_mean_pupil_diameter'] = np.mean(pupil_diams) if pupil_diams else np.nan
             instance_data.append(row)
         df_instance = pd.DataFrame(instance_data)
 
-        # Tabella 3: Mappa ID -> Classe
+        # Table 3: ID to Class Map
         id_map_data = list(instance_to_class_map.items())
-        df_id_map = pd.DataFrame(id_map_data, columns=['instance_id', 'classe_oggetto'])
-        df_id_map = df_id_map.sort_values(by=['classe_oggetto', 'instance_id']).reset_index(drop=True)
+        df_id_map = pd.DataFrame(id_map_data, columns=['instance_id', 'object_class'])
+        df_id_map = df_id_map.sort_values(by=['object_class', 'instance_id']).reset_index(drop=True)
 
         return df_class, df_instance, df_id_map
 
 # ==============================================================================
-# BLOCCO PRINCIPALE
+# MAIN BLOCK
 # ==============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Analizza dati di gaze tracking e YOLO.")
-    parser.add_argument("--video", required=True, help="Percorso del file video.")
-    parser.add_argument("--gaze_csv", required=True, help="Percorso del file gaze.csv.")
-    parser.add_argument("--world_csv", required=True, help="Percorso del file world_timestamps.csv.")
-    parser.add_argument("--pupil_csv", required=True, help="Percorso del file 3d_eye_states.csv.")
-    parser.add_argument("--events_csv", required=True, help="Percorso del file events.csv.")
-    parser.add_argument("--output_class_csv", default="statistiche_per_classe.csv", help="Nome del file CSV per le statistiche per classe.")
-    parser.add_argument("--output_instance_csv", default="statistiche_per_istanza.csv", help="Nome del file CSV per le statistiche per istanza.")
-    parser.add_argument("--output_id_map_csv", default="mappa_id_classe.csv", help="Nome del file CSV per la mappa ID-classe.")
-    parser.add_argument("--generate_video", action='store_true', help="Abilita la generazione di un video con annotazioni (gaze e bounding box).")
-    parser.add_argument("--output_video", default="output_annotated.mp4", help="Percorso del file video di output con annotazioni.")
+    parser = argparse.ArgumentParser(description="Analyze gaze tracking and YOLO data.")
+    parser.add_argument("--video", required=True, help="Path to the video file.")
+    parser.add_argument("--gaze_csv", required=True, help="Path to the gaze.csv file.")
+    parser.add_argument("--world_csv", required=True, help="Path to the world_timestamps.csv file.")
+    parser.add_argument("--pupil_csv", required=True, help="Path to the 3d_eye_states.csv file.")
+    parser.add_argument("--events_csv", required=True, help="Path to the events.csv file.")
+    parser.add_argument("--output_class_csv", default="stats_by_class.csv", help="Output CSV filename for stats per class.")
+    parser.add_argument("--output_instance_csv", default="stats_by_instance.csv", help="Output CSV filename for stats per instance.")
+    parser.add_argument("--output_id_map_csv", default="id_to_class_map.csv", help="Output CSV filename for the ID-to-class map.")
+    parser.add_argument("--generate_video", action='store_true', help="Enable generation of an annotated video (gaze and bounding boxes).")
+    parser.add_argument("--output_video", default="output_annotated.mp4", help="Path for the annotated output video file.")
     
     args = parser.parse_args()
 
     try:
-        # FASE 0: Setup
-        DATA_DIR = "./data"
+        # STAGE 0: Setup
+        DATA_DIR = "./data_yolo_cache"
         setup_directories([DATA_DIR])
 
-        # FASE 1: Allineamento Dati
+        # STAGE 1: Data Alignment
         aligned_df = align_data(
             gaze_path=args.gaze_csv, world_path=args.world_csv,
             pupil_path=args.pupil_csv, events_path=args.events_csv
         )
         
-        # FASE 2: Analisi Video e Fissazioni
+        # STAGE 2: Video and Fixation Analysis
         analyzer = GazeAnalyzer(video_path=args.video, aligned_data_df=aligned_df, data_dir=DATA_DIR)
         analyzer.run_yolo_tracking()
         
-        # FASE 3: Calcolo Statistiche
+        # STAGE 3: Statistics Calculation
         stats_class, stats_instance, id_map = analyzer.analyze_fixations_and_stats()
         df_class_results, df_instance_results, df_id_map_results = analyzer.create_results_tables(stats_class, stats_instance, id_map)
         
-        # FASE 4: Output
+        # STAGE 4: Output
         df_class_results.to_csv(args.output_class_csv, index=False, float_format='%.4f')
         df_instance_results.to_csv(args.output_instance_csv, index=False, float_format='%.4f')
         df_id_map_results.to_csv(args.output_id_map_csv, index=False)
         
-        print("\n--- Statistiche per Classe ---")
+        print("\n--- Statistics by Class ---")
         print(df_class_results)
-        print(f"\nRisultati salvati con successo in '{args.output_class_csv}'")
+        print(f"\nResults successfully saved to '{args.output_class_csv}'")
         
-        print("\n--- Statistiche per Istanza (Classe + ID) ---")
+        print("\n--- Statistics by Instance (Class + ID) ---")
         print(df_instance_results)
-        print(f"\nRisultati salvati con successo in '{args.output_instance_csv}'")
+        print(f"\nResults successfully saved to '{args.output_instance_csv}'")
 
-        print("\n--- Mappa ID Oggetto -> Classe ---")
+        print("\n--- Object ID to Class Map ---")
         print(df_id_map_results)
-        print(f"\nRisultati salvati con successo in '{args.output_id_map_csv}'")
+        print(f"\nMap successfully saved to '{args.output_id_map_csv}'")
 
-        # FASE 5: Generazione Video (Opzionale)
+        # STAGE 5: Video Generation (Optional)
         if args.generate_video:
             analyzer.generate_annotated_video(output_path=args.output_video)
 
     except Exception as e:
-        print(f"\nSi è verificato un errore: {e}")
+        print(f"\nAn error occurred: {e}")
         import traceback
         traceback.print_exc()
     finally:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        print("Pulizia della memoria completata.")
+        print("Memory cleanup complete.")
 
 if __name__ == "__main__":
     main()

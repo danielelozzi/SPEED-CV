@@ -8,32 +8,31 @@ import numpy as np
 import cv2
 from tqdm import tqdm
 
-# --- IMPORTAZIONE DEI MODULI DI ANALISI ---
+# --- ANALYSIS MODULE IMPORTS ---
 try:
     import speed_script_events as speed_events
     import process_gaze_data_v2 as yolo_events
     from ultralytics import YOLO
     YOLO_AVAILABLE = True
-    print("Moduli di analisi e YOLO importati con successo.")
+    print("Analytics and YOLO modules successfully imported.")
 except ImportError as e:
     YOLO_AVAILABLE = False
-    print(f"ATTENZIONE: Impossibile importare i moduli di analisi o YOLO. Alcune funzionalità potrebbero non essere disponibili. Errore: {e}")
+    print(f"WARNING: Unable to import analytics or YOLO modules. Some features may not be available. Error: {e}")
 
 # ==============================================================================
-# NUOVA FUNZIONE PER ANALISI SU SUPERFICIE
+# FUNCTION FOR SURFACE-BASED ANALYSIS
 # ==============================================================================
 
 def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, generate_video: bool):
     """
-    Esegue l'analisi YOLO ritagliando e raddrizzando ogni frame del video
-    in base al file 'surface_positions.csv'.
+    Performs YOLO analysis by warping each video frame based on the 'surface_positions.csv' file.
     """
-    print("\n>>> ESECUZIONE ANALISI YOLO SU SUPERFICIE MARKER-MAPPED...")
+    print("\n>>> RUNNING YOLO ANALYSIS ON MARKER-MAPPED SURFACE...")
     if not YOLO_AVAILABLE:
-        print("Libreria 'ultralytics' non trovata. Salto questa analisi.")
+        print("Library 'ultralytics' not found. Skipping this analysis.")
         return
 
-    # Percorsi dei file necessari
+    # Required file paths
     world_timestamps_path = data_dir / 'world_timestamps.csv'
     gaze_csv_path = data_dir / 'gaze_enriched.csv'
     surface_positions_path = data_dir / 'surface_positions.csv'
@@ -41,10 +40,10 @@ def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, 
 
     for f in [world_timestamps_path, gaze_csv_path, surface_positions_path, input_video_path]:
         if not f.exists():
-            raise FileNotFoundError(f"File di input richiesto per l'analisi su superficie non trovato: {f}")
+            raise FileNotFoundError(f"Input file required for surface analysis not found: {f}")
 
-    # 1. Allineamento Dati Gaze
-    print("Allineamento timestamp per analisi su superficie...")
+    # 1. Gaze Data Alignment
+    print("Timestamp alignment for surface analysis...")
     world_timestamps = pd.read_csv(world_timestamps_path)
     world_timestamps['world_index'] = world_timestamps.index
     gaze = pd.read_csv(gaze_csv_path)
@@ -59,21 +58,21 @@ def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, 
         left_on='world_timestamp_ns', right_on='gaze_timestamp_ns',
         direction='nearest', tolerance=pd.Timedelta('100ms')
     )
-    print("Allineamento completato.")
+    print("Alignment completed.")
 
-    # 2. Caricamento Dati Superficie e Modello YOLO
+    # 2. Load Surface Data and YOLO Model
     surface_positions = pd.read_csv(surface_positions_path)
     if 'world_index' not in surface_positions.columns:
         surface_positions['world_index'] = surface_positions.index
 
-    print("Caricamento modello YOLOv8...")
+    print("Loading YOLOv8 model...")
     model = YOLO("yolov8n.pt")
-    print("Modello YOLOv8 caricato.")
+    print("YOLOv8 model loaded.")
 
-    # 3. Processamento Video
+    # 3. Video Processing
     cap = cv2.VideoCapture(str(input_video_path))
     if not cap.isOpened():
-        raise IOError(f"Errore: Impossibile aprire il video {input_video_path}")
+        raise IOError(f"Error: Unable to open video {input_video_path}")
 
     fps = cap.get(cv2.CAP_PROP_FPS)
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -84,7 +83,7 @@ def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, 
     analysis_results = []
     
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    pbar = tqdm(total=total_frames, desc="Analisi Video su Superficie")
+    pbar = tqdm(total=total_frames, desc="Surface Video Analysis")
 
     frame_count = 0
     processed_frame_count = 0
@@ -102,7 +101,7 @@ def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, 
             frame_count += 1
             continue
         
-        # 4. Raddrizzamento Prospettico
+        # 4. Perspective Warping
         try:
             src_pts = np.float32([[surface_info[f'{corner} x [px]'].iloc[0], surface_info[f'{corner} y [px]'].iloc[0]] for corner in ['tl', 'tr', 'br', 'bl']])
             
@@ -122,7 +121,7 @@ def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, 
             frame_count += 1
             continue
 
-        # 5. Analisi YOLO sul frame raddrizzato
+        # 5. YOLO Analysis on the Warped Frame
         yolo_results = model(warped_frame, verbose=False)
         
         gaze_x_norm, gaze_y_norm = (gaze_info.iloc[0]['gaze_x_norm'], gaze_info.iloc[0]['gaze_y_norm']) if not gaze_info.empty else (np.nan, np.nan)
@@ -170,27 +169,27 @@ def run_yolo_surface_analysis(data_dir: Path, output_dir: Path, subj_name: str, 
         results_df = pd.DataFrame(analysis_results)
         output_csv_path = output_dir / f"surface_analysis_data_{subj_name}.csv"
         results_df.to_csv(output_csv_path, index=False, float_format='%.4f')
-        print(f"Dati di analisi su superficie salvati in {output_csv_path}")
+        print(f"Surface analysis data saved to {output_csv_path}")
     if generate_video:
-        print(f"Video di analisi su superficie salvato in {output_video_path}")
+        print(f"Surface analysis video saved to {output_video_path}")
 
 
 # ==============================================================================
-# FUNZIONE ORCHESTRATRICE PRINCIPALE
+# MAIN ORCHESTRATOR FUNCTION
 # ==============================================================================
 
 def run_full_analysis(subj_name: str, data_dir_str: str, output_dir_str: str, options: dict):
     """
-    Orchestra l'intera pipeline di analisi chiamando le funzioni importate.
+    Orchestrates the entire analysis pipeline by calling imported functions.
     """
-    print(f"--- AVVIO ANALISI COMPLETA PER IL SOGGETTO: {subj_name} ---")
+    print(f"--- STARTING FULL ANALYSIS FOR SUBJECT: {subj_name} ---")
     
     data_dir = Path(data_dir_str)
     output_dir = Path(output_dir_str)
     
-    # --- 1. ANALISI STANDARD BASATA SU EVENTI ---
+    # --- 1. STANDARD EVENT-BASED ANALYSIS ---
     if options.get("run_standard"):
-        print("\n>>> ESECUZIONE ANALISI STANDARD BASATA SU EVENTI...")
+        print("\n>>> RUNNING STANDARD EVENT-BASED ANALYSIS...")
         try:
             speed_events.run_analysis(
                 subj_name=subj_name,
@@ -199,15 +198,15 @@ def run_full_analysis(subj_name: str, data_dir_str: str, output_dir_str: str, op
                 un_enriched_mode=False,
                 generate_video=options.get("generate_standard_video")
             )
-            print(">>> Analisi standard completata.")
+            print(">>> Standard analysis finished.")
         except Exception as e:
-            print(f"!!! Errore durante l'analisi standard: {e}")
+            print(f"!!! Error during standard analysis: {e}")
             traceback.print_exc()
 
-    # --- 2. ANALISI CON YOLO ---
+    # --- 2. YOLO-BASED ANALYSIS ---
     if options.get("run_yolo"):
         if options.get("run_surface_yolo"):
-            # Modalità su superficie
+            # Surface mode
             try:
                 run_yolo_surface_analysis(
                     data_dir=data_dir,
@@ -216,24 +215,23 @@ def run_full_analysis(subj_name: str, data_dir_str: str, output_dir_str: str, op
                     generate_video=options.get("generate_surface_video")
                 )
             except Exception as e:
-                print(f"!!! Errore durante l'analisi YOLO su superficie: {e}")
+                print(f"!!! Error during YOLO surface analysis: {e}")
                 traceback.print_exc()
         else:
-            # Modalità su frame intero (utilizzando il modulo yolo_events)
-            print("\n>>> ESECUZIONE ANALISI YOLO SU FRAME INTERO...")
+            # Full-frame mode (using the yolo_events module)
+            print("\n>>> RUNNING FULL-FRAME YOLO ANALYSIS...")
             try:
                 yolo_output_dir = output_dir / "yolo_fullframe_analysis"
                 yolo_output_dir.mkdir(parents=True, exist_ok=True)
                 
-                # Esegui la funzione main da process_gaze_data_v2 ma con argomenti passati programmaticamente
-                # (Questo richiede di modificare process_gaze_data_v2 per accettare argomenti invece di usare argparse)
-                # Per semplicità, qui simuliamo la chiamata. L'implementazione completa richiederebbe una refactorizzazione
-                # di process_gaze_data_v2.py per trasformare il suo blocco main in una funzione chiamabile.
-                print("NOTA: L'analisi YOLO su frame intero richiede una refactorizzazione di 'process_gaze_data_v2.py'.")
-                print("Questa funzionalità è simulata. Verrà eseguita l'analisi su superficie se selezionata.")
+                # This part would call a refactored, callable function from process_gaze_data_v2.py.
+                # Since the original script uses argparse, a direct call isn't possible without modification.
+                # For this reason, the call is simulated here.
+                print("NOTE: Full-frame YOLO analysis requires 'process_gaze_data_v2.py' to be refactored into a callable function.")
+                print("This feature is currently a placeholder. Surface analysis will be performed if selected.")
 
             except Exception as e:
-                print(f"!!! Errore durante l'analisi YOLO su frame intero: {e}")
+                print(f"!!! Error during full-frame YOLO analysis: {e}")
                 traceback.print_exc()
 
-    print(f"\n--- ANALISI COMPLETA PER {subj_name} TERMINATA ---")
+    print(f"\n--- FULL ANALYSIS FOR {subj_name} COMPLETED ---")

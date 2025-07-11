@@ -147,7 +147,7 @@ The analysis generates a main folder named `analysis_results_{participant_name}`
     * `blink_time_series_{...}.pdf`: Binary time series plot of blink events.
    
 5.  **Analysis Video (`.mp4`)**
-    * `output_analysis_video.mp4`: An MP4 video that synchronizes the internal view, external view, and a real-time plot of pupil diameters and blinks (if the option is checked).
+    * `output_analysis_video.mp4`: (if the option is checked) An MP4 video that synchronizes the internal view, external view, and a real-time plot of pupil diameters (left, right and average) and blinks.
 
 ---
 

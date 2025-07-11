@@ -8,16 +8,16 @@ import os
 from scipy.signal import welch, spectrogram
 from scipy.stats import gaussian_kde
 
-# --- Costants ---
+# --- Constants ---
 SAMPLING_FREQ = 200  # Hz
 NS_TO_S = 1e9
 
 def euclidean_distance(x1, y1, x2, y2):
-    """Calcola la distanza euclidea tra due punti."""
+    """Calculates the Euclidean distance between two points."""
     return np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
 def load_all_data(data_dir: Path, un_enriched_mode: bool):
-    """Carica tutti i file CSV necessari dalla directory dei dati."""
+    """Loads all necessary CSV files from the data directory."""
     files_to_load = {
         'events': 'events.csv', 'fixations_not_enr': 'fixations.csv', 'gaze_not_enr': 'gaze.csv',
         'pupil': '3d_eye_states.csv', 'blinks': 'blinks.csv', 'saccades': 'saccades.csv'
@@ -31,21 +31,21 @@ def load_all_data(data_dir: Path, un_enriched_mode: bool):
             dataframes[name] = pd.read_csv(data_dir / filename)
         except FileNotFoundError:
             if name in ['gaze', 'fixations_enr', 'fixations_not_enr', 'gaze_not_enr']:
-                print(f"Info: File opzionale o di base {filename} non trovato, si procede senza.")
+                print(f"Info: Optional or base file {filename} not found, proceeding without it.")
                 dataframes[name] = pd.DataFrame()
             else:
-                raise FileNotFoundError(f"File dati richiesto non trovato: {filename}")
+                raise FileNotFoundError(f"Required data file not found: {filename}")
     return dataframes
 
 def get_timestamp_col(df):
-    """Ottiene la colonna di timestamp corretta da un dataframe."""
+    """Gets the correct timestamp column from a dataframe."""
     for col in ['start timestamp [ns]', 'timestamp [ns]']:
         if col in df.columns:
             return col
     return None
 
 def filter_data_by_segment(all_data, start_ts, end_ts, rec_id):
-    """Filtra tutti i dataframe per uno specifico segmento temporale [start_ts, end_ts)."""
+    """Filters all dataframes for a specific time segment [start_ts, end_ts)."""
     segment_data = {}
     for name, df in all_data.items():
         if df.empty or name == 'events':
@@ -62,7 +62,7 @@ def filter_data_by_segment(all_data, start_ts, end_ts, rec_id):
     return segment_data
 
 def process_gaze_movements(gaze_df, un_enriched_mode: bool):
-    """Identifica ed elabora i movimenti dello sguardo dai dati gaze ARRICCHITI."""
+    """Identifies and processes gaze movements from ENRICHED gaze data."""
     if un_enriched_mode or gaze_df.empty or 'fixation id' not in gaze_df.columns or 'gaze detected on surface' not in gaze_df.columns:
         return pd.DataFrame()
     
@@ -88,7 +88,7 @@ def process_gaze_movements(gaze_df, un_enriched_mode: bool):
     return pd.DataFrame(movements)
 
 def calculate_summary_features(data, movements_df, subj_name, event_name, un_enriched_mode: bool, video_width: int, video_height: int):
-    """Calcola un dizionario di feature di riepilogo, inclusa la normalizzazione dai pixel."""
+    """Calculates a dictionary of summary features, including normalization from pixels."""
     pupil, blinks, saccades = data.get('pupil', pd.DataFrame()), data.get('blinks', pd.DataFrame()), data.get('saccades', pd.DataFrame())
     gaze_enr, gaze_not_enr = data.get('gaze', pd.DataFrame()), data.get('gaze_not_enr', pd.DataFrame())
     fixations_enr, fixations_not_enr = data.get('fixations_enr', pd.DataFrame()), data.get('fixations_not_enr', pd.DataFrame())
@@ -104,7 +104,7 @@ def calculate_summary_features(data, movements_df, subj_name, event_name, un_enr
         'n_gaze_per_fixation_avg': np.nan
     }
 
-    # --- Feature delle Fissazioni ---
+    # --- Fixation Features ---
     fixations_to_analyze = fixations_not_enr if not fixations_not_enr.empty else pd.DataFrame()
     if not un_enriched_mode and not fixations_enr.empty and 'fixation detected on surface' in fixations_enr.columns:
         enriched_on_surface = fixations_enr[fixations_enr['fixation detected on surface'] == True].copy()
@@ -116,15 +116,15 @@ def calculate_summary_features(data, movements_df, subj_name, event_name, un_enr
         
         x_coords, y_coords = pd.Series(dtype='float64'), pd.Series(dtype='float64')
         if 'fixation x [normalized]' in fixations_to_analyze.columns:
-            print("DEBUG: Uso le coordinate pre-normalizzate dal file arricchito.")
+            print("DEBUG: Using pre-normalized coordinates from the enriched file.")
             x_coords, y_coords = fixations_to_analyze['fixation x [normalized]'], fixations_to_analyze['fixation y [normalized]']
         elif 'fixation x [px]' in fixations_to_analyze.columns:
             if video_width and video_height and video_width > 0 and video_height > 0:
-                print(f"DEBUG: Normalizzo le coordinate in pixel usando le dimensioni del video {video_width}x{video_height}.")
+                print(f"DEBUG: Normalizing pixel coordinates using video dimensions {video_width}x{video_height}.")
                 x_coords = fixations_to_analyze['fixation x [px]'] / video_width
                 y_coords = fixations_to_analyze['fixation y [px]'] / video_height
             else:
-                print("ATTENZIONE: Le coordinate delle fissazioni sono in pixel, ma le dimensioni del video non sono disponibili. Impossibile normalizzare.")
+                print("WARNING: Fixation coordinates are in pixels, but video dimensions are unavailable. Cannot normalize.")
         
         if not x_coords.empty:
             results.update({
@@ -132,7 +132,7 @@ def calculate_summary_features(data, movements_df, subj_name, event_name, un_enr
                 'fixation_avg_y': y_coords.mean(), 'fixation_std_y': y_coords.std()
             })
 
-    # --- Altre Feature ---
+    # --- Other Features ---
     gaze_for_fix_count = pd.DataFrame()
     if not un_enriched_mode and not gaze_enr.empty and 'fixation id' in gaze_enr.columns:
         gaze_for_fix_count = gaze_enr
@@ -157,7 +157,7 @@ def calculate_summary_features(data, movements_df, subj_name, event_name, un_enr
             'effective_disp_avg': movements_df['effective_displacement'].mean(), 'effective_disp_std': movements_df['effective_displacement'].std()
         })
     elif not saccades.empty:
-        print("DEBUG: Calcolo le feature dei movimenti da saccades.csv")
+        print("DEBUG: Calculating movement features from saccades.csv")
         sacc_duration_s = saccades['duration [ms]'] / 1000
         amplitude = saccades['amplitude [deg]'] if 'amplitude [deg]' in saccades.columns else pd.Series(dtype='float64')
         results.update({
@@ -170,7 +170,7 @@ def calculate_summary_features(data, movements_df, subj_name, event_name, un_enr
     return results
 
 def _plot_histogram(data_series, title, xlabel, output_path):
-    """Funzione ausiliaria per creare un istogramma standardizzato."""
+    """Helper function to create a standardized histogram."""
     if data_series.dropna().empty:
         return
     plt.figure(figsize=(10, 6))
@@ -183,25 +183,16 @@ def _plot_histogram(data_series, title, xlabel, output_path):
     plt.savefig(output_path)
     plt.close()
 
-def get_timestamp_col(df):
-    """Ottiene la colonna di timestamp corretta da un dataframe."""
-    for col in ['start timestamp [ns]', 'timestamp [ns]']:
-        if col in df.columns:
-            return col
-    return None
-
-
 def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, un_enriched_mode: bool, video_width: int, video_height: int):
     """
-    Genera e salva tutti i grafici per l'evento, unificando la logica da generate_plots e generate_plots_2.
+    Generates and saves all plots for the event, unifying logic.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     fixations_enr, fixations_not_enr = data.get('fixations_enr', pd.DataFrame()), data.get('fixations_not_enr', pd.DataFrame())
     gaze_enr, gaze_not_enr = data.get('gaze', pd.DataFrame()), data.get('gaze_not_enr', pd.DataFrame())
     pupil_df, blinks_df, saccades_df = data.get('pupil', pd.DataFrame()), data.get('blinks', pd.DataFrame()), data.get('saccades', pd.DataFrame())
 
-    # --- Plot Pupillometria (Originale: Destro e Sinistro separati) ---
-    # Questo plot è presente in entrambe le versioni ma viene consolidato qui.
+    # --- Pupillometry Plot (Left and Right separate) ---
     if not pupil_df.empty and ('pupil diameter left [mm]' in pupil_df.columns or 'pupil diameter right [mm]' in pupil_df.columns):
         if not un_enriched_mode and not gaze_enr.empty and 'gaze detected on surface' in gaze_enr.columns:
             gaze_enr_unique_ts = gaze_enr.drop_duplicates(subset=['timestamp [ns]']).copy()
@@ -227,30 +218,19 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
 
             if 'gaze detected on surface' in pupil_plot_df.columns and not un_enriched_mode:
                 timestamps_seconds = pupil_plot_df['timestamp [ns]'] / NS_TO_S
-                # Ensure timestamps_seconds is not empty and has enough points
-                if len(timestamps_seconds) > 1:
-                    epsilon = (timestamps_seconds.iloc[1] - timestamps_seconds.iloc[0]) / 2
-                else:
-                    epsilon = 0.01 # Small default epsilon
+                epsilon = (timestamps_seconds.diff().mean() / 2) if len(timestamps_seconds) > 1 else 0.01
 
-                current_status = None
-                start_time = None
-
-                # Consolidated background coloring logic from generate_plots_2 (more robust)
-                for i, row in pupil_plot_df.iterrows():
-                    ts = row['timestamp [ns]'] / NS_TO_S
-                    gaze_on_surface = row['gaze detected on surface']
-
-                    if current_status is None:
-                        current_status = gaze_on_surface
-                        start_time = ts
-                    elif gaze_on_surface != current_status:
-                        color = 'lightgreen' if current_status else 'lightcoral'
-                        plt.axvspan(start_time - epsilon, ts - epsilon, facecolor=color, alpha=0.3, lw=0)
-                        current_status = gaze_on_surface
-                        start_time = ts
+                start_time = timestamps_seconds.iloc[0] if not timestamps_seconds.empty else None
+                current_status = pupil_plot_df.iloc[0]['gaze detected on surface'] if not pupil_plot_df.empty else None
                 
-                if start_time is not None and not timestamps_seconds.empty:
+                if start_time is not None and current_status is not None:
+                    for i in range(1, len(pupil_plot_df)):
+                        if pupil_plot_df.iloc[i]['gaze detected on surface'] != current_status:
+                            end_time = timestamps_seconds.iloc[i]
+                            color = 'lightgreen' if current_status else 'lightcoral'
+                            plt.axvspan(start_time - epsilon, end_time - epsilon, facecolor=color, alpha=0.3, lw=0)
+                            start_time = end_time
+                            current_status = pupil_plot_df.iloc[i]['gaze detected on surface']
                     color = 'lightgreen' if current_status else 'lightcoral'
                     plt.axvspan(start_time - epsilon, timestamps_seconds.iloc[-1] + epsilon, facecolor=color, alpha=0.3, lw=0)
 
@@ -263,10 +243,9 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
             plt.savefig(output_dir / f'pupil_diameter_gaze_surface_{subj_name}_{event_name}.pdf')
             plt.close()
         else:
-            print(f"ATTENZIONE: Dati pupillari insufficienti per l'evento '{event_name}'. Nessun grafico generato.")
+            print(f"WARNING: Insufficient pupil data for event '{event_name}'. No plot generated.")
 
-    # --- Plot Pupillometria (Media di Destro e Sinistro) ---
-    # Questo è un plot unico di generate_plots_2, aggiunto qui.
+    # --- Pupillometry Plot (Mean of Left and Right) ---
     if not pupil_df.empty and 'pupil diameter left [mm]' in pupil_df.columns and 'pupil diameter right [mm]' in pupil_df.columns and not un_enriched_mode:
         pupil_df_mean = pupil_df.copy()
         pupil_df_mean['pupil_diameter_mean'] = pupil_df_mean[['pupil diameter left [mm]', 'pupil diameter right [mm]']].mean(axis=1)
@@ -284,7 +263,6 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
             timestamps_seconds = pupil_with_gaze_status['timestamp [ns]'] / NS_TO_S
             epsilon = (timestamps_seconds.diff().mean() / 2) if len(timestamps_seconds) > 1 else 0.01
             
-            # Background coloring logic (identical to above, but applied to mean plot)
             start_time = timestamps_seconds.iloc[0] if not timestamps_seconds.empty else None
             current_status = pupil_with_gaze_status.iloc[0]['gaze detected on surface'] if not pupil_with_gaze_status.empty else None
             
@@ -303,9 +281,9 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
             plt.xlabel('Time [s]'); plt.ylabel('Mean Pupil Diameter [mm]'); plt.legend(); plt.grid(axis='y', linestyle='--', alpha=0.7); plt.tight_layout()
             plt.savefig(output_dir / f'pupil_diameter_mean_gaze_surface_{subj_name}_{event_name}.pdf'); plt.close()
         else:
-            print(f"ATTENZIONE: Dati medi pupillari insufficienti per l'evento '{event_name}'. Nessun grafico generato.")
+            print(f"WARNING: Insufficient mean pupil data for event '{event_name}'. No plot generated.")
 
-    # --- Periodogramma e Spettrogramma ---
+    # --- Periodogram and Spectrogram ---
     if not pupil_df.empty and 'pupil diameter left [mm]' in pupil_df.columns:
         ts = pupil_df['pupil diameter left [mm]'].dropna().to_numpy()
         if len(ts) > SAMPLING_FREQ:
@@ -316,12 +294,11 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
                 f, t, Sxx = spectrogram(ts, fs=SAMPLING_FREQ, nperseg=min(len(ts), 256), noverlap=min(len(ts)//2, 50))
                 plt.figure(figsize=(10, 5)); plt.pcolormesh(t, f, 10 * np.log10(np.maximum(Sxx, 1e-10)), shading='gouraud'); plt.title(f'Spectrogram - {subj_name} - {event_name}'); plt.ylabel('Frequency [Hz]'); plt.xlabel('Time [s]'); plt.colorbar(label='Power [dB]'); plt.savefig(output_dir / f'spectrogram_{subj_name}_{event_name}.pdf'); plt.close()
             except Exception as e:
-                print(f"ATTENZIONE: Impossibile generare periodogramma/spettrogramma per '{event_name}'. Errore: {e}")
+                print(f"WARNING: Could not generate periodogram/spectrogram for '{event_name}'. Error: {e}")
         else:
-            print(f"ATTENZIONE: Dati pupillari insufficienti per periodogramma/spettrogramma per l'evento '{event_name}'.")
+            print(f"WARNING: Insufficient pupil data for periodogram/spectrogram for event '{event_name}'.")
 
-    # --- Istogrammi ---
-    # Fixation Histograms (from generate_plots_2)
+    # --- Histograms ---
     if not un_enriched_mode and not fixations_enr.empty and 'duration [ms]' in fixations_enr.columns:
         fixations_on_surface = fixations_enr[fixations_enr['fixation detected on surface'] == True]
         if not fixations_on_surface.empty:
@@ -329,19 +306,18 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
     if not fixations_not_enr.empty and 'duration [ms]' in fixations_not_enr.columns:
         _plot_histogram(fixations_not_enr['duration [ms]'], f"Fixation Duration (Un-enriched) - {subj_name} - {event_name}", "Duration [ms]", output_dir / f'hist_fixations_not_enriched_{subj_name}_{event_name}.pdf')
 
-    # Blinks and Saccades Histograms (consolidated)
     if not blinks_df.empty and 'duration [ms]' in blinks_df.columns:
         _plot_histogram(blinks_df['duration [ms]'], f"Blink Duration Histogram - {subj_name} - {event_name}", "Duration [ms]", output_dir / f'hist_blinks_{subj_name}_{event_name}.pdf')
     if not saccades_df.empty and 'duration [ms]' in saccades_df.columns:
         _plot_histogram(saccades_df['duration [ms]'], f"Saccade Duration Histogram - {subj_name} - {event_name}", "Duration [ms]", output_dir / f'hist_saccades_{subj_name}_{event_name}.pdf')
 
-    # --- Grafici di percorso (Fixation Path) ---
+    # --- Path Plots (Fixation Path) ---
     if not un_enriched_mode and not fixations_enr.empty and 'fixation x [normalized]' in fixations_enr.columns:
         enriched_on_surface = fixations_enr[fixations_enr['fixation detected on surface'] == True]
         if not enriched_on_surface.empty:
             plt.figure(figsize=(10, 6)); plt.plot(enriched_on_surface['fixation x [normalized]'], enriched_on_surface['fixation y [normalized]'], marker='o', linestyle='-', color='green'); plt.title(f"Fixation Path (Enriched) - {subj_name} - {event_name}"); plt.xlabel('Normalized X'); plt.ylabel('Normalized Y'); plt.grid(True); plt.savefig(output_dir / f'path_fixation_enriched_{subj_name}_{event_name}.pdf'); plt.close()
         else:
-            print(f"ATTENZIONE: Nessuna fissazione arricchita rilevata sulla superficie per l'evento '{event_name}'. Nessun grafico generato.")
+            print(f"WARNING: No enriched fixations detected on surface for event '{event_name}'. No plot generated.")
 
     if not fixations_not_enr.empty and 'fixation x [px]' in fixations_not_enr.columns:
         plt.figure(figsize=(10, 6))
@@ -355,22 +331,21 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
         else:
             x_coords, y_coords = x_coords_px, y_coords_px
             xlabel_text, ylabel_text = 'Pixel X', 'Pixel Y'
-            print("ATTENZIONE: Le coordinate delle fissazioni non arricchite sono in pixel e le dimensioni del video non sono disponibili per la normalizzazione.")
+            print("WARNING: Un-enriched fixation coordinates are in pixels and video dimensions are not available for normalization.")
 
         plt.plot(x_coords, y_coords, marker='o', linestyle='-', color='purple')
         plt.title(f"Fixation Path (Un-enriched) - {subj_name} - {event_name}"); plt.xlabel(xlabel_text); plt.ylabel(ylabel_text); plt.grid(True)
         plt.savefig(output_dir / f'path_fixation_not_enriched_{subj_name}_{event_name}.pdf')
         plt.close()
     else:
-        print(f"ATTENZIONE: Dati di fissazione non arricchiti insufficienti per l'evento '{event_name}'. Nessun grafico generato.")
+        print(f"WARNING: Insufficient un-enriched fixation data for event '{event_name}'. No plot generated.")
     
-    # --- Grafici di percorso (Gaze Path) ---
+    # --- Path Plots (Gaze Path) ---
     if not un_enriched_mode and not gaze_enr.empty and 'gaze position on surface x [normalized]' in gaze_enr.columns:
         gaze_on_surface = gaze_enr[gaze_enr['gaze detected on surface'] == True]
         if not gaze_on_surface.empty:
             plt.figure(figsize=(10, 6)); plt.plot(gaze_on_surface['gaze position on surface x [normalized]'], gaze_on_surface['gaze position on surface y [normalized]'], marker='.', linestyle='-', color='red', alpha=0.5); plt.title(f"Gaze Path (Enriched) - {subj_name} - {event_name}"); plt.xlabel('Normalized X'); plt.ylabel('Normalized Y'); plt.grid(True); plt.savefig(output_dir / f'path_gaze_enriched_{subj_name}_{event_name}.pdf'); plt.close()
 
-    # Un-enriched Gaze Path (improved logic from generate_plots_2)
     if not gaze_not_enr.empty:
         x_col, y_col, coords_type = None, None, None
         if 'gaze position x [px]' in gaze_not_enr.columns and 'gaze position y [px]' in gaze_not_enr.columns:
@@ -395,11 +370,11 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
             plt.xlabel(xlabel); plt.ylabel(ylabel); plt.grid(True)
             plt.savefig(output_dir / f'path_gaze_not_enriched_{subj_name}_{event_name}.pdf'); plt.close()
         else:
-            print(f"ATTENZIONE: Colonne di sguardo non arricchite ('gaze position x [px]' o 'gaze x [norm]') non trovate per l'evento '{event_name}'.")
+            print(f"WARNING: Un-enriched gaze columns ('gaze position x [px]' or 'gaze x [norm]') not found for event '{event_name}'.")
     else:
-        print(f"ATTENZIONE: Dati di sguardo non arricchiti insufficienti per l'evento '{event_name}'. Nessun grafico generato.")
+        print(f"WARNING: Insufficient un-enriched gaze data for event '{event_name}'. No plot generated.")
 
-    # --- Plot Saccade Velocities ---
+    # --- Saccade Velocities Plot ---
     if not saccades_df.empty and 'mean velocity [px/s]' in saccades_df.columns and 'peak velocity [px/s]' in saccades_df.columns:
         plt.figure(figsize=(10, 6))
         plt.plot(saccades_df.index, saccades_df['mean velocity [px/s]'], label='mean velocity', color='blue')
@@ -413,9 +388,9 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
         plt.savefig(output_dir / f'saccade_velocities_{subj_name}_{event_name}.pdf')
         plt.close()
     else:
-        print(f"ATTENZIONE: Dati di velocità delle saccadi insufficienti per l'evento '{event_name}'.")
+        print(f"WARNING: Insufficient saccade velocity data for event '{event_name}'.")
 
-    # --- Plot Saccade Amplitude ---
+    # --- Saccade Amplitude Plot ---
     if not saccades_df.empty and 'amplitude [px]' in saccades_df.columns:
         plt.figure(figsize=(10, 6))
         plt.plot(saccades_df.index, saccades_df['amplitude [px]'], label='amplitude', color='teal')
@@ -428,9 +403,9 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
         plt.savefig(output_dir / f'saccade_amplitude_{subj_name}_{event_name}.pdf')
         plt.close()
     else:
-        print(f"ATTENZIONE: Dati di ampiezza delle saccadi insufficienti per l'evento '{event_name}'.")
+        print(f"WARNING: Insufficient saccade amplitude data for event '{event_name}'.")
 
-    # --- Plot Blink Time Series ---
+    # --- Blink Time Series Plot ---
     if not blinks_df.empty and 'start timestamp [ns]' in blinks_df.columns and 'duration [ms]' in blinks_df.columns:
         all_timestamps = []
         if 'timestamp [ns]' in pupil_df.columns:
@@ -441,7 +416,7 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
             all_timestamps.extend(saccades_df['start timestamp [ns]'].tolist())
         
         if not all_timestamps:
-            print(f"ATTENZIONE: Nessun timestamp disponibile per creare la serie temporale dei blink per l'evento '{event_name}'.")
+            print(f"WARNING: No timestamps available to create blink time series for event '{event_name}'.")
             return
 
         min_ts = min(all_timestamps)
@@ -451,7 +426,7 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
         num_points = int(duration_s * SAMPLING_FREQ)
         
         if num_points <= 0:
-            print(f"ATTENZIONE: Durata del segmento troppo breve per generare la serie temporale dei blink per l'evento '{event_name}'.")
+            print(f"WARNING: Segment duration too short to generate blink time series for event '{event_name}'.")
             return
 
         time_axis_s = np.linspace(0, duration_s, num_points)
@@ -482,10 +457,10 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
         plt.savefig(output_dir / f'blink_time_series_{subj_name}_{event_name}.pdf')
         plt.close()
     else:
-        print(f"ATTENZIONE: Dati di blink insufficienti per l'evento '{event_name}'.")
+        print(f"WARNING: Insufficient blink data for event '{event_name}'.")
 
-    # --- Heatmaps di densità ---
-    # Heatmap delle Fissazioni (Arricchite, su superficie)
+    # --- Density Heatmaps ---
+    # Enriched Fixations Heatmap (on surface)
     if not un_enriched_mode and not fixations_enr.empty and 'fixation x [normalized]' in fixations_enr.columns:
         fixations_enriched_on_surface = fixations_enr[fixations_enr['fixation detected on surface'] == True].copy()
         plot_heatmap(fixations_enriched_on_surface['fixation x [normalized]'], fixations_enriched_on_surface['fixation y [normalized]'], 
@@ -493,7 +468,7 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
                      output_dir / f'heatmap_fixation_enriched_{subj_name}_{event_name}.pdf', xlim=(0, 1), ylim=(0, 1), 
                      xlabel='Normalized X', ylabel='Normalized Y')
 
-    # Heatmap delle Fissazioni (Non Arricchite)
+    # Un-enriched Fixations Heatmap
     if not fixations_not_enr.empty and 'fixation x [px]' in fixations_not_enr.columns:
         x_px = fixations_not_enr['fixation x [px]'].dropna()
         y_px = fixations_not_enr['fixation y [px]'].dropna()
@@ -505,14 +480,14 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
         else:
             x_coords, y_coords = x_px, y_px
             xlabel_text, ylabel_text = 'Pixel X', 'Pixel Y'
-            xlim, ylim = (None, None), (None, None) # Let plot_heatmap determine based on data
-            print("ATTENZIONE: Le coordinate delle fissazioni non arricchite sono in pixel e le dimensioni del video non sono disponibili per la normalizzazione per heatmap.")
+            xlim, ylim = (None, None), (None, None) 
+            print("WARNING: Un-enriched fixation coordinates are in pixels and video dimensions are not available for heatmap normalization.")
         
         plot_heatmap(x_coords, y_coords, f"Fixation Density Heatmap (Un-enriched) - {subj_name} - {event_name}", 
                      output_dir / f'heatmap_fixation_not_enriched_{subj_name}_{event_name}.pdf', xlim=xlim, ylim=ylim, 
                      xlabel=xlabel_text, ylabel=ylabel_text)
 
-    # Heatmap dello Sguardo (Arricchito, su superficie)
+    # Enriched Gaze Heatmap (on surface)
     if not un_enriched_mode and not gaze_enr.empty and 'gaze position on surface x [normalized]' in gaze_enr.columns:
         gaze_on_surface = gaze_enr[gaze_enr['gaze detected on surface'] == True].copy()
         plot_heatmap(gaze_on_surface['gaze position on surface x [normalized]'], gaze_on_surface['gaze position on surface y [normalized]'], 
@@ -520,7 +495,7 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
                      output_dir / f'heatmap_gaze_enriched_{subj_name}_{event_name}.pdf', xlim=(0, 1), ylim=(0, 1), 
                      xlabel='Normalized X', ylabel='Normalized Y')
 
-    # Heatmap dello Sguardo (Non Arricchito)
+    # Un-enriched Gaze Heatmap
     if not gaze_not_enr.empty:
         x_col, y_col, coords_type = None, None, None
         if 'gaze position x [px]' in gaze_not_enr.columns and 'gaze position y [px]' in gaze_not_enr.columns:
@@ -537,27 +512,26 @@ def generate_plots(data, movements_df, subj_name, event_name, output_dir: Path, 
             elif coords_type == 'normalized':
                 xlim, ylim, xlabel, ylabel = (0, 1), (0, 1), 'Normalized X', 'Normalized Y'
             else:
-                xlim, ylim, xlabel, ylabel = (None, None), (None, None), 'Pixel X', 'Pixel Y' # Let plot_heatmap determine
-                print("ATTENZIONE: Le coordinate dello sguardo non arricchite sono in pixel e le dimensioni del video non sono disponibili per la normalizzazione per heatmap.")
+                xlim, ylim, xlabel, ylabel = (None, None), (None, None), 'Pixel X', 'Pixel Y' 
+                print("WARNING: Un-enriched gaze coordinates are in pixels and video dimensions are not available for heatmap normalization.")
                 
             plot_heatmap(x_coords, y_coords, f"Gaze Density Heatmap (Un-enriched) - {subj_name} - {event_name}", 
                          output_dir / f'heatmap_gaze_not_enriched_{subj_name}_{event_name}.pdf', xlim=xlim, ylim=ylim, 
                          xlabel=xlabel, ylabel=ylabel)
         else:
-            print(f"ATTENZIONE: Colonne di sguardo non arricchite ('gaze position x [px]' o 'gaze x [norm]') non trovate per heatmap per l'evento '{event_name}'.")
+            print(f"WARNING: Un-enriched gaze columns ('gaze position x [px]' or 'gaze x [norm]') not found for heatmap for event '{event_name}'.")
     else:
-        print(f"ATTENZIONE: Dati di sguardo non arricchiti insufficienti per heatmap per l'evento '{event_name}'. Nessun grafico generato.")
+        print(f"WARNING: Insufficient un-enriched gaze data for heatmap for event '{event_name}'. No plot generated.")
 
 def plot_heatmap(x, y, title, output_path, xlim=None, ylim=None, xlabel='X', ylabel='Y'):
-    """Funzione ausiliaria per creare una heatmap di densità con gestione errori."""
+    """Helper function to create a density heatmap with error handling."""
     x = x.dropna(); y = y.dropna()
     valid_points = pd.concat([x, y], axis=1).dropna()
     if len(valid_points) < 3:
-        print(f"ATTENZIONE: Dati insufficienti (meno di 3 punti validi) per generare heatmap: '{title}'")
+        print(f"WARNING: Insufficient data (less than 3 valid points) to generate heatmap: '{title}'")
         return
     try:
         k = gaussian_kde(valid_points.values.T)
-        # Ensure mgrid covers the data range or specified limits
         if xlim and ylim:
             xi, yi = np.mgrid[xlim[0]:xlim[1]:100j, ylim[0]:ylim[1]:100j]
         else:
@@ -570,20 +544,19 @@ def plot_heatmap(x, y, title, output_path, xlim=None, ylim=None, xlabel='X', yla
         if ylim: plt.ylim(ylim)
         plt.grid(True, linestyle='--'); plt.tight_layout(); plt.savefig(output_path); plt.close()
     except np.linalg.LinAlgError:
-        print(f"ATTENZIONE: Impossibile generare heatmap per '{title}' (matrice singolare, dati non sufficientemente variati).")
+        print(f"WARNING: Could not generate heatmap for '{title}' (singular matrix, data not varied enough).")
     except Exception as e:
-        print(f"ATTENZIONE: Errore imprevisto durante la generazione di heatmap per '{title}': {e}")
-
+        print(f"WARNING: Unexpected error during heatmap generation for '{title}': {e}")
 
 def process_segment(event_row, start_ts, end_ts, all_data, subj_name, output_dir, un_enriched_mode, video_width, video_height):
-    """Pipeline di elaborazione principale per un singolo segmento di evento."""
+    """Main processing pipeline for a single event segment."""
     event_name = event_row.get('name', f"segment_{event_row.name}")
-    print(f"--- Elaborazione segmento per l'evento: '{event_name}' ---")
+    print(f"--- Processing segment for event: '{event_name}' ---")
     rec_id = event_row['recording id']
     
     segment_data = filter_data_by_segment(all_data, start_ts, end_ts, rec_id)
     if all(df.empty for name, df in segment_data.items() if name != 'events'):
-        print(f"  -> Salto il segmento '{event_name}' perché non ci sono dati nell'intervallo.")
+        print(f"  -> Skipping segment '{event_name}' because no data was found in the time range.")
         return None
     
     movements_df = process_gaze_movements(segment_data.get('gaze', pd.DataFrame()), un_enriched_mode)
@@ -593,14 +566,14 @@ def process_segment(event_row, start_ts, end_ts, all_data, subj_name, output_dir
     return results
 
 def get_video_dimensions(video_path: Path):
-    """Ottiene larghezza e altezza di un file video."""
+    """Gets width and height from a video file."""
     if not video_path.exists():
-        print(f"ATTENZIONE: File video non trovato in {video_path}. Impossibile ottenere le dimensioni per la normalizzazione.")
+        print(f"WARNING: Video file not found at {video_path}. Cannot get dimensions for normalization.")
         return None, None
     
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
-        print(f"ATTENZIONE: Impossibile aprire il file video {video_path}.")
+        print(f"WARNING: Could not open video file {video_path}.")
         return None, None
     
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -609,10 +582,10 @@ def get_video_dimensions(video_path: Path):
     return width, height
 
 def downsample_video(input_file, output_file, input_fps, output_fps):
-    """Downsample un file video a un FPS inferiore."""
+    """Downsamples a video file to a lower FPS."""
     cap = cv2.VideoCapture(str(input_file))
     if not cap.isOpened():
-        print(f"Errore: Impossibile aprire il file video {input_file}")
+        print(f"Error: Could not open video file {input_file}")
         return
 
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -628,67 +601,66 @@ def downsample_video(input_file, output_file, input_fps, output_fps):
             if not ret: break
             if i % frame_interval == 0:
                 out.write(frame)
-        print(f"Video downsampled a {output_file}")
+        print(f"Video downsampled to {output_file}")
     else:
-        print(f"Errore: Impossibile aprire il file video di output per il downsampling: {output_file}")
+        print(f"Error: Could not open the output video file for downsampling: {output_file}")
     cap.release()
     out.release()
 
 def create_analysis_video(data_dir: Path, output_dir: Path):
     """
-    Crea un video di analisi che combina eye tracking, vista esterna e diametro pupillare.
-    VERSIONE MODIFICATA per sincronizzazione temporale e grafici migliorati.
+    Creates an analysis video combining eye tracking, world view, and pupil diameter.
+    MODIFIED VERSION for temporal synchronization and improved plots.
     """
-    print("\nCreazione del video di analisi in corso...")
+    print("\nCreating analysis video...")
 
-    # --- Percorsi dei file ---
+    # --- File Paths ---
     internal_video_path = data_dir / 'internal.mp4'
     external_video_path = data_dir / 'external.mp4'
     pupil_data_path = data_dir / '3d_eye_states.csv'
     blinks_data_path = data_dir / 'blinks.csv'
 
     if not all([p.exists() for p in [internal_video_path, external_video_path, pupil_data_path, blinks_data_path]]):
-        print("Salto la creazione del video: file richiesti non trovati (internal.mp4, external.mp4, 3d_eye_states.csv, blinks.csv).")
+        print("Skipping video creation: required files not found (internal.mp4, external.mp4, 3d_eye_states.csv, blinks.csv).")
         return
 
     try:
-        # --- Caricamento e preparazione dati ---
+        # --- Data Loading and Preparation ---
         pupil_data = pd.read_csv(pupil_data_path)
         blinks_data = pd.read_csv(blinks_data_path)
 
-        # Trova il timestamp iniziale per normalizzare l'asse temporale
+        # Find the initial timestamp to normalize the time axis
         t0 = pupil_data['timestamp [ns]'].min()
         
-        # Converti i timestamp in secondi dall'inizio
+        # Convert timestamps to seconds from the start
         pupil_data['time_sec'] = (pupil_data['timestamp [ns]'] - t0) / 1e9
         blinks_data['start_sec'] = (blinks_data['start timestamp [ns]'] - t0) / 1e9
         blinks_data['end_sec'] = blinks_data['start_sec'] + (blinks_data['duration [ms]'] / 1000)
         
-        # *** NUOVO: Calcola la media dei diametri delle pupille ***
+        # Calculate the mean of pupil diameters
         pupil_data['pupil_diameter_mean'] = pupil_data[['pupil diameter left [mm]', 'pupil diameter right [mm]']].mean(axis=1)
 
 
-        # --- Setup Video ---
+        # --- Video Setup ---
         cap1 = cv2.VideoCapture(str(internal_video_path))
         cap2 = cv2.VideoCapture(str(external_video_path))
         fps = cap1.get(cv2.CAP_PROP_FPS)
 
         if not cap1.isOpened() or not cap2.isOpened():
-            print("Errore nell'apertura dei file video per l'animazione.")
+            print("Error opening video files for animation.")
             return
 
-        # --- Setup Grafico ---
+        # --- Plot Setup ---
         fig, (video_axes1, video_axes2, ts_axes) = plt.subplots(3, 1, figsize=(12, 9), gridspec_kw={'height_ratios': [3, 3, 2]})
         fig.tight_layout(pad=4.0)
         
-        # Plotta l'intera serie temporale una sola volta
-        ts_axes.plot(pupil_data['time_sec'], pupil_data['pupil diameter left [mm]'], color='dodgerblue', alpha=0.8, label='Pupilla Sinistra')
-        ts_axes.plot(pupil_data['time_sec'], pupil_data['pupil diameter right [mm]'], color='orchid', alpha=0.8, label='Pupilla Destra')
-        # *** NUOVO: Aggiungi la linea della media al grafico ***
-        ts_axes.plot(pupil_data['time_sec'], pupil_data['pupil_diameter_mean'], color='black', linestyle='--', lw=1.5, label='Media Pupille')
+        # Plot the entire time series once
+        ts_axes.plot(pupil_data['time_sec'], pupil_data['pupil diameter left [mm]'], color='dodgerblue', alpha=0.8, label='Left Pupil')
+        ts_axes.plot(pupil_data['time_sec'], pupil_data['pupil diameter right [mm]'], color='orchid', alpha=0.8, label='Right Pupil')
+        ts_axes.plot(pupil_data['time_sec'], pupil_data['pupil_diameter_mean'], color='black', linestyle='--', lw=1.5, label='Mean Pupil')
 
 
-        # Aggiungi le strisce rosse per i blink
+        # Add red bands for blinks
         for _, blink in blinks_data.iterrows():
             ts_axes.axvspan(blink['start_sec'], blink['end_sec'], color='red', alpha=0.4, lw=0)
 
@@ -698,28 +670,28 @@ def create_analysis_video(data_dir: Path, output_dir: Path):
         ts_axes.legend()
         ts_axes.grid(True, linestyle='--', alpha=0.6)
         
-        # Imposta i limiti dell'asse per evitare che cambino
+        # Set axis limits to prevent them from changing
         max_time = pupil_data['time_sec'].max()
         ts_axes.set_xlim(0, max_time)
         min_pupil = min(pupil_data['pupil diameter left [mm]'].min(), pupil_data['pupil diameter right [mm]'].min())
         max_pupil = max(pupil_data['pupil diameter left [mm]'].max(), pupil_data['pupil diameter right [mm]'].max())
         ts_axes.set_ylim(min_pupil * 0.95, max_pupil * 1.05)
 
-        # Aggiungi la linea verticale che indicherà il tempo corrente
+        # Add a vertical line that will indicate the current time
         time_indicator = ts_axes.axvline(x=0, color='red', linestyle='-', lw=2)
 
-        # --- Setup Video Writer ---
+        # --- Video Writer Setup ---
         output_video_path = output_dir / 'output_analysis_video.mp4'
         w, h = fig.canvas.get_width_height()
         fourcc = cv2.VideoWriter_fourcc(*'avc1')
         out = cv2.VideoWriter(str(output_video_path), fourcc, fps, (w, h))
 
         if not out.isOpened():
-            print(f"Errore: Impossibile creare il file video di output: {output_video_path}")
+            print(f"Error: Could not create the output video file: {output_video_path}")
             cap1.release(); cap2.release(); plt.close(fig)
             return
 
-        # --- Loop di Creazione Video ---
+        # --- Video Creation Loop ---
         frame_count = 0
         while cap1.isOpened() and cap2.isOpened():
             ret1, frame1 = cap1.read()
@@ -728,18 +700,18 @@ def create_analysis_video(data_dir: Path, output_dir: Path):
             if not ret1 or not ret2:
                 break
 
-            # Sincronizza tramite il timestamp del video
+            # Synchronize using the video's timestamp
             current_video_time_sec = cap1.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
 
-            # Aggiorna le viste video
+            # Update video views
             video_axes1.clear(); video_axes2.clear()
             video_axes1.imshow(cv2.cvtColor(frame1, cv2.COLOR_BGR2RGB)); video_axes1.axis('off'); video_axes1.set_title("Internal View (Eye)")
             video_axes2.imshow(cv2.cvtColor(frame2, cv2.COLOR_BGR2RGB)); video_axes2.axis('off'); video_axes2.set_title("External View")
             
-            # Aggiorna solo la posizione della linea verticale
+            # Update only the position of the vertical line
             time_indicator.set_xdata([current_video_time_sec])
 
-            # Cattura il frame del grafico e scrivilo nel video
+            # Capture the plot frame and write it to the video
             fig.canvas.draw()
             img_buf = fig.canvas.buffer_rgba()
             img = np.array(img_buf)
@@ -747,19 +719,19 @@ def create_analysis_video(data_dir: Path, output_dir: Path):
             
             frame_count += 1
             if frame_count % 100 == 0:
-                print(f"  ...elaborato frame {frame_count} ({current_video_time_sec:.2f}s)")
+                print(f"  ...processed frame {frame_count} ({current_video_time_sec:.2f}s)")
 
-        # --- Pulizia ---
+        # --- Cleanup ---
         cap1.release(); cap2.release(); out.release(); plt.close(fig)
-        print(f"Video di analisi salvato in {output_video_path}")
+        print(f"Analysis video saved to {output_video_path}")
 
     except Exception as e:
-        print(f"Si è verificato un errore inaspettato durante la creazione del video: {e}")
+        print(f"An unexpected error occurred during video creation: {e}")
         import traceback
         traceback.print_exc()
 
 def run_analysis(subj_name='subj_01', data_dir_str='./eyetracking_file', output_dir_str='./results', un_enriched_mode=False, generate_video=True):
-    """Funzione principale per eseguire l'intera pipeline di analisi basata su segmenti di eventi."""
+    """Main function to run the entire analysis pipeline based on event segments."""
     pd.options.mode.chained_assignment = None
     data_dir, output_dir = Path(data_dir_str), Path(output_dir_str)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -769,17 +741,17 @@ def run_analysis(subj_name='subj_01', data_dir_str='./eyetracking_file', output_
     try:
         all_data = load_all_data(data_dir, un_enriched_mode)
     except FileNotFoundError as e:
-        print(f"Analisi interrotta. {e}")
+        print(f"Analysis stopped. {e}")
         return
         
     events_df = all_data.get('events')
     if events_df is None or events_df.empty:
-        print("Errore: events.csv non caricato o vuoto. Impossibile procedere.")
+        print("Error: events.csv not loaded or empty. Cannot proceed.")
         return
         
     all_results = []
     if len(events_df) > 1:
-        print(f"\nTrovati {len(events_df)} eventi, elaborazione di {len(events_df) - 1} segmenti.")
+        print(f"\nFound {len(events_df)} events, processing {len(events_df) - 1} segments.")
         for i in range(len(events_df) - 1):
             event_row, start_ts, end_ts = events_df.iloc[i], events_df.iloc[i]['timestamp [ns]'], events_df.iloc[i+1]['timestamp [ns]']
             try:
@@ -787,10 +759,10 @@ def run_analysis(subj_name='subj_01', data_dir_str='./eyetracking_file', output_
                 if event_results:
                     all_results.append(event_results)
             except Exception as e:
-                print(f"Impossibile elaborare il segmento per l'evento '{event_row.get('name', i)}'. Errore: {e}")
+                print(f"Could not process segment for event '{event_row.get('name', i)}'. Error: {e}")
                 traceback.print_exc()
     else:
-        print("Attenzione: Trovati meno di due eventi. Impossibile elaborare segmenti.")
+        print("Warning: Fewer than two events found. Cannot process segments.")
         
     if all_results:
         results_df = pd.DataFrame(all_results)
@@ -806,9 +778,9 @@ def run_analysis(subj_name='subj_01', data_dir_str='./eyetracking_file', output_
         results_df = results_df[final_columns]
         results_filename = output_dir / f'summary_results_{subj_name}.csv'
         results_df.to_csv(results_filename, index=False)
-        print(f"\nRisultati aggregati salvati in {results_filename}")
+        print(f"\nAggregate results saved to {results_filename}")
     else:
-        print("\nNessun risultato di analisi è stato generato.")
+        print("\nNo analysis results were generated.")
         
     if generate_video:
         create_analysis_video(data_dir, output_dir)
