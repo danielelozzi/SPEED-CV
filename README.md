@@ -4,7 +4,7 @@
 
 SPEED is a Python-based tool with a graphical user interface (GUI) for processing and analyzing eye-tracking data from cognitive and behavioral experiments. It is designed to segment data based on predefined events, calculate key metrics, and generate visualizations of eye movements like gaze paths and fixations.
 
-** This is a new version based on the first version of SPEED: [**SPEED v1.0**](https://https://github.com/danielelozzi/SPEED).
+*This is a new version based on the first version of SPEED:* [**SPEED v1.0**](https://https://github.com/danielelozzi/SPEED).
 
 The tool can handle both raw (un-enriched) and surface-projected (enriched) eye-tracking data, making it flexible for various stages of the analysis pipeline.
 
