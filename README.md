@@ -170,6 +170,10 @@ When you generate plots, the following files will be created in the `plots/` dir
     * Lozzi, D.; Di Pompeo, I.; Marcaccio, M.; Ademaj, M.; Migliore, S.; Curcio, G. SPEED: A Graphical User Interface Software for Processing Eye Tracking Data. NeuroSci 2025, 6, 35. <https://doi.org/10.3390/neurosci6020035>
     * Lozzi, D.; Di Pompeo, I.; Marcaccio, M.; Alemanno, M.; Krüger, M.; Curcio, G.; Migliore, S. AI-Powered Analysis of Eye Tracker Data in Basketball Game. Sensors 2025, 25, 3572. <https://doi.org/10.3390/s25113572>
 
+* Is also request to cite Pupil Labs publication, as they requests in ther website <https://docs.pupil-labs.com/neon/data-collection/publications-and-citation/>
+
+     * Baumann, C., & Dierkes, K. (2023). Neon accuracy test report. Pupil Labs, 10.
+
 * If you also use the Computer Vision YOLO-based feature, please cite the following publication:
 
     * Redmon, J., Divvala, S., Girshick, R., & Farhadi, A. (2016). You only look once: Unified, real-time object detection. In Proceedings of the IEEE conference on computer vision and pattern recognition (pp. 779-788). <https://doi.org/10.1109/CVPR.2016.91>
