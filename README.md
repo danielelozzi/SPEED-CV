@@ -84,14 +84,14 @@ To run the SPEED analysis tool, you'll need Python 3 and several scientific comp
         * `Run YOLO Object Detection`: Check this to perform object detection.
     * Click the **"RUN CORE ANALYSIS"** button and wait for the confirmation message. This completes the main data processing.
 
-    ![GUI - Setup and Core Analysis](gui1.jpg)
+    ![GUI - Setup and Core Analysis](gui1.png)
 
 3.  **Section 4: Generate Plots**
     * Switch to the "Generate Plots" tab.
     * Select the categories of plots you wish to generate (e.g., Heatmaps, Path Plots).
     * Click the **"GENERATE SELECTED PLOTS"** button.
 
-    ![GUI - Plot Generation Tab](gui2.jpg)
+    ![GUI - Plot Generation Tab](gui2.png)
 
 4.  **Section 5: Generate Videos**
     * Switch to the "Generate Videos" tab.
@@ -99,7 +99,7 @@ To run the SPEED analysis tool, you'll need Python 3 and several scientific comp
     * **Set the Output Video Filename**.
     * Click the **"GENERATE VIDEO"** button. You can repeat this step with different settings to create multiple videos from the same analysis.
 
-    ![GUI - Video Generation Tab](gui3.jpg)
+    ![GUI - Video Generation Tab](gui3.png)
 
 ---
 
@@ -174,8 +174,3 @@ When you generate plots, the following files will be created in the `plots/` dir
 
     * Redmon, J., Divvala, S., Girshick, R., & Farhadi, A. (2016). You only look once: Unified, real-time object detection. In Proceedings of the IEEE conference on computer vision and pattern recognition (pp. 779-788). <https://doi.org/10.1109/CVPR.2016.91>
 
-## Screenshots of the GUI
-
-![Screenshot of the SPEED GUI](gui1.png)
-![Screenshot of the SPEED GUI](gui2.png)
-![Screenshot of the SPEED GUI](gui3.png)
